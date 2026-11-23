@@ -43,10 +43,6 @@ jobs:
           uv run python -m mercury.cli migrate
           uv run alembic downgrade base
           uv run python -m mercury.cli migrate
-      - name: PostgreSQL backup client
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client-17
       - name: Isolated PostgreSQL backup and restore
         env:
           MERCURY_ENV: test
@@ -55,11 +51,11 @@ jobs:
           MERCURY_DEMO_PASSWORD: TestPassword-123!
           MERCURY_WRITES_ENABLED: 'false'
           PGPASSWORD: ci-test-only
+          MERCURY_PG_CLIENT_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          export PATH=/usr/lib/postgresql/17/bin:$PATH
           uv run python -m mercury.cli seed
           uv run python scripts/postgres_recovery.py backup .data/postgres-backup --workers-stopped
-          createdb -h localhost -U postgres mercury_restore_test
+          docker exec "$MERCURY_PG_CLIENT_CONTAINER" createdb -U postgres mercury_restore_test
           MERCURY_DATABASE_URL=postgresql+psycopg://postgres:ci-test-only@localhost:5432/mercury_restore_test MERCURY_DATA_DIR=.data/restored uv run python scripts/postgres_recovery.py restore .data/postgres-backup --workers-stopped
       - uses: actions/upload-artifact@v4
         if: always()

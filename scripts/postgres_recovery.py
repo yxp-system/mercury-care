@@ -38,18 +38,31 @@ def main():
         PGPASSWORD=url.password or "",
         PGDATABASE=url.database or "",
     )
+    container = os.environ.get("MERCURY_PG_CLIENT_CONTAINER", "")
+    prefix = []
+    if container:
+        import re
+
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", container):
+            raise SystemExit("Invalid PostgreSQL client container identifier")
+        prefix = ["docker", "exec", "-i"]
+        for key in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE"):
+            prefix.extend(["-e", key])
+        prefix.append(container)
     root = args.directory.resolve()
     started = time.monotonic()
     if args.mode == "backup":
         if root.exists():
             raise SystemExit("Backup directory already exists; choose a new destination")
         root.mkdir(parents=True)
-        subprocess.run(
-            ["pg_dump", "--format=custom", "--no-owner", "--file", str(root / "database.dump")],
-            env=child_env,
-            check=True,
-            capture_output=True,
-        )
+        with (root / "database.dump").open("wb") as archive:
+            subprocess.run(
+                prefix + ["pg_dump", "--format=custom", "--no-owner"],
+                env=child_env,
+                check=True,
+                stdout=archive,
+                stderr=subprocess.PIPE,
+            )
         uploads = settings.data_dir / "uploads"
         if uploads.exists():
             if any(path.is_symlink() for path in uploads.rglob("*")):
@@ -96,21 +109,24 @@ def main():
         with psycopg.connect(conninfo) as connection:
             if connection.execute("SELECT count(*) FROM pg_tables WHERE schemaname='public'").fetchone()[0]:
                 raise SystemExit("Restore refuses a non-empty database")
-        subprocess.run(
-            [
-                "pg_restore",
-                "--exit-on-error",
-                "--single-transaction",
-                "--no-owner",
-                "--no-acl",
-                "--dbname",
-                url.database,
-                str(root / "database.dump"),
-            ],
-            env=child_env,
-            check=True,
-            capture_output=True,
-        )
+        with (root / "database.dump").open("rb") as archive:
+            subprocess.run(
+                prefix
+                + [
+                    "pg_restore",
+                    "--exit-on-error",
+                    "--single-transaction",
+                    "--no-owner",
+                    "--no-acl",
+                    "--dbname",
+                    url.database,
+                ],
+                env=child_env,
+                check=True,
+                stdin=archive,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
         with psycopg.connect(conninfo) as connection:
             connection.execute("UPDATE browser_sessions SET revoked=true, refresh_ciphertext=''")
             connection.execute("DELETE FROM login_transactions")
