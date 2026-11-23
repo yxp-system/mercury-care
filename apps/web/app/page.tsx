@@ -1056,7 +1056,8 @@ export default function Workspace() {
                         ? "合成政策"
                         : text(item.source)}
                     </small>
-                    {allowed("knowledge_reviewer") && (
+                    {Boolean(item.document_id) && <small>随下方完整文档统一审核与撤回</small>}
+                    {allowed("knowledge_reviewer") && !item.document_id && (
                       <button
                         className="secondary"
                         onClick={async () => {
@@ -1139,7 +1140,8 @@ export default function Workspace() {
           )}
 
           {page === "release" && allowed("operations") && <EnterprisePanel mode="operations" roles={me.roles} />}
-          {page === "knowledge" && allowed("knowledge", "knowledge_reviewer") && <EnterprisePanel mode="knowledge" roles={me.roles} />}
+          {page === "knowledge" && allowed("knowledge", "knowledge_reviewer") && <EnterprisePanel mode="knowledge" roles={me.roles}
+            onUpdated={async () => {setItems(await api<Item[]>("/policies"));}} />}
           {page === "inventory" && (
             <section className="panel">
               <div className="panel-heading">

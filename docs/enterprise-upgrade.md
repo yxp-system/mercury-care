@@ -31,7 +31,7 @@
 
 新增迁移 `238f42efcd92`。现有已出库动作从原 `ship` 台账回填兼容包裹记录，保留原动作与原请求；历史未发送通知的版本默认 0，需要人工复核。旧迁移保持原样。
 
-升级前停止 API/worker 并备份；升级后先以冻结写入模式启动和核查。`scripts/postgres_recovery.py` 使用官方 `pg_dump`/`pg_restore` 客户端，密码经进程环境传入。恢复只允许空的新数据库且名字包含 `_restore_`，验证归档和附件哈希、撤销恢复出来的会话、输出恢复记录；不会自动解除冻结。完整外部动作恢复窗口、旧实例隔离和生产 RPO/RTO 需要在选定环境实测。
+升级前停止 API/worker 并备份；升级后先以冻结写入模式启动和核查。`scripts/postgres_recovery.py` 使用官方 `pg_dump`/`pg_restore` 客户端，密码经进程环境传入。可用 `MERCURY_PG_CLIENT_CONTAINER` 指定已有 PostgreSQL 容器中的同版本工具，归档经标准输入/输出流传输，不把密码放进命令参数。恢复只允许空的新数据库且名字包含 `_restore_`，验证归档和附件哈希、撤销恢复出来的会话、输出恢复记录；不会自动解除冻结。完整外部动作恢复窗口、旧实例隔离和生产 RPO/RTO 需要在选定环境实测。
 
 ```bash
 # 先停止消费者，受控环境设置 MERCURY_WRITES_ENABLED=false
@@ -42,6 +42,8 @@ uv run python -m mercury.cli release-check
 ```
 
 release-check 返回非零退出码表示上线条件仍有缺项。当前 OMS/WMS、支付、物流和真实通知没有选定供应商，门禁明确阻塞；不能用修改门禁或切换环境名代替接入。
+
+CI 中 `scripts/recovery_drill.py` 仅允许显式 test 环境和包含 test 的数据库名。prepare 通过应用 API 建立客户选择、独立批准和原请求，再注入合成丢回执、附件和一次性会话；verify 检查恢复后的原请求、库存占用、附件哈希、会话撤销、登录事务清理和禁止派发。测试记录与生产外部动作窗口的验证分开，实际执行结果见 [验收记录](acceptance.md)。
 
 ## 待选型后完成
 

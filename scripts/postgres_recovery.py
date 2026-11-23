@@ -132,7 +132,16 @@ def main():
             connection.execute("DELETE FROM login_transactions")
             counts = {
                 table: connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
-                for table in ("cases", "plans", "approvals", "actions", "jobs", "shipments")
+                for table in (
+                    "cases",
+                    "plans",
+                    "approvals",
+                    "actions",
+                    "jobs",
+                    "shipments",
+                    "attachments",
+                    "browser_sessions",
+                )
             }
         destination = settings.data_dir / "uploads"
         if (root / "uploads").exists():

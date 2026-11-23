@@ -53,10 +53,11 @@ jobs:
           PGPASSWORD: ci-test-only
           MERCURY_PG_CLIENT_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          uv run python -m mercury.cli seed
+          MERCURY_WRITES_ENABLED=true uv run python scripts/recovery_drill.py prepare
           uv run python scripts/postgres_recovery.py backup .data/postgres-backup --workers-stopped
           docker exec "$MERCURY_PG_CLIENT_CONTAINER" createdb -U postgres mercury_restore_test
           MERCURY_DATABASE_URL=postgresql+psycopg://postgres:ci-test-only@localhost:5432/mercury_restore_test MERCURY_DATA_DIR=.data/restored uv run python scripts/postgres_recovery.py restore .data/postgres-backup --workers-stopped
+          MERCURY_DATABASE_URL=postgresql+psycopg://postgres:ci-test-only@localhost:5432/mercury_restore_test MERCURY_DATA_DIR=.data/restored uv run python scripts/recovery_drill.py verify --expected .data/recovery-expected.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -64,6 +65,7 @@ jobs:
           path: |
             .data/*tests.xml
             .data/restored/recovery-report.json
+            .data/restored/recovery-drill.json
           include-hidden-files: true
   frontend:
     runs-on: ubuntu-latest

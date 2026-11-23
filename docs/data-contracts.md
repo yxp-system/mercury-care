@@ -6,17 +6,21 @@
 |---|---|
 | users / memberships | 认证主体、有效状态、店铺岗位、客户范围；不相信 JWT 的岗位字段 |
 | orders / order_lines | 实付、已退、处理中占用、行权益；余额不可为负或超付 |
-| inventory / stock_ledger | 在库 ≥ 预留 ≥ 0；动作+台账类型唯一 |
+| inventory / stock_ledger | 在库 ≥ 预留 ≥ 0；动作+台账类型唯一；分批出库的台账类型含包裹 ID |
 | cases / messages / attachments | 订单行归属、版本、入站 source_id、附件哈希与扫描状态 |
 | plans / choices / approvals | 方案版本唯一、内容摘要、选择、不可覆盖决定、有效期 |
 | actions / provider requests | plan_id 唯一、稳定 request_id、未知与可信回执分开 |
+| shipments | 关联原动作和包裹、数量与物流状态；累计数量不得超批准数量 |
 | business_events | 可信来源或显式合成入口、source_id 去重、序号与内容摘要 |
 | runs / run_steps / jobs | 运行身份、输入版本、预算、模式、Prompt 哈希、错误、租约与 fence |
 | policies | 原文、版本、适用期、来源、审核、向量模型与状态 |
+| knowledge_documents | 文档族、版本、正文、ACL、作者/独立审核人与后台索引；章节随整份文档统一发布 |
+| browser_sessions / login_transactions | 会话句柄哈希、加密刷新令牌、到期与撤销；一次性 OIDC 事务 |
+| escalations | 运行超时去重、原因、接管人和接管时间 |
 | notifications | 固定接收客户、内容意图哈希、稳定发送关联、合成回执 |
 | claims / improvements / audit | 责任主体、证据、版本、复查/结算依据与追加审计 |
 
-核心工单状态：open、waiting_customer、waiting_approval、approved、processing、awaiting_fulfillment、awaiting_resolution、needs_review、resolved、closed。运行状态：queued、running、waiting、completed、failed。动作状态随分支执行显式转换；不可从 unknown 跳过原请求核查。
+核心工单状态：open、waiting_customer、waiting_approval、approved、processing、awaiting_fulfillment、awaiting_resolution、needs_review、resolved、closed。运行状态：queued、running、waiting、completed、failed、cancelled、timed_out。动作状态随分支执行显式转换；不可从 unknown 跳过原请求核查。
 
 输入使用 Pydantic 严格字段契约，未知字段拒绝；版本变更冲突返回 409。资源无权与不存在统一 404；岗位不足为 403；身份无效为 401；未配置真实服务为 503。错误含 request_id，不回显密码或完整请求正文。
 
@@ -30,6 +34,9 @@
 - `/api/webhooks/{tenant}/{store}/{action}`：绑定路径、时间戳和正文的 HMAC，五分钟窗口，事件去重。
 - 工单下 `/resolve`、`/close`、`/reopen`、`/notifications`、`/claims`：处理后续。
 - `/api/policies`、`/api/policies/{id}/publish|withdraw`：版本与独立审核。
+- `/api/knowledge/documents`、文档下 `/publish|withdraw`：后台导入、整份文档的版本发布和撤回；章节不能单独发布。
+- `/api/events`：重新鉴权并按客户范围筛选的实时刷新提示。
+- `/api/runs/{id}/cancel`、`/api/escalations`、`/api/release-readiness`：取消分析、超时交接和实际上线缺项。
 - `/api/operations`、`/api/inventory`、`/api/improvements`、`/api/claims`、`/api/jobs`：经营与运行。
 
 写入 JSON 示例请在 API 文档查看当前 Schema；不需要手工猜字段。Cookie 代理把 token 留在服务端同源路由，客户端不使用 localStorage 存令牌。

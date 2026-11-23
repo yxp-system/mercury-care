@@ -12,7 +12,7 @@ uv run python -m mercury.cli seed
 uv run pytest -q --tb=short --junitxml=.data/local-tests.xml
 ```
 
-当前后端结果：**42 passed, 1 skipped**，101.14 秒。跳过项为需 PostgreSQL 的受限角色 RLS 测试；本机未安装 PostgreSQL/Docker。其余测试使用真实 SQLite 数据库、真实应用服务与显式测试模型。新增用例验证通知提交时的工单版本，拒绝旧状态内容且不创建 Outbox 任务。
+v0.1 后端结果：**42 passed, 1 skipped**，101.14 秒。跳过项为需 PostgreSQL 的受限角色 RLS 测试；本机未安装 PostgreSQL/Docker。其余测试使用真实 SQLite 数据库、真实应用服务与显式测试模型。新增用例验证通知提交时的工单版本，拒绝旧状态内容且不创建 Outbox 任务。
 
 覆盖证据：
 
@@ -50,3 +50,9 @@ GitHub CI（提交 `289cf741231422315457017db8a7064d53f080d5`）已实际通过�
 前端生产构建与 TypeScript 检查通过。升级前停止了本机 API/worker，写入 `.data/before-enterprise-upgrade` 并完成 SHA256、SQLite integrity_check 和 foreign_key_check；备份含 16 工单、1 方案、1 审批、1 动作、5 任务。迁移 `238f42efcd92` 在原数据库上成功运行，Alembic check 无待生成结构变更。
 
 新增测试覆盖 OIDC 浏览器绑定、PKCE、nonce、回调重放、加密刷新与登出；共享限流；取消后不再消耗预算；SLA 去重交接；ClamAV TCP 流式协议、隔离与内容篡改；文档 ACL、独立审核与版本切换；两个包裹先后出库/送达与库存守恒；通知回执丢失及队列中状态过期。身份提供方、扫描引擎、业务提供方均按明确测试契约验证，未声称真实企业联调。
+
+v0.2 提交 `e7604964d78d80eac06b9b00c09fe4e2e456c25d` 的 [CI](https://github.com/yxp-system/mercury-care/actions/runs/45189973791) 三个作业全部通过。SQLite **54 passed, 1 skipped**（60.70 秒），PostgreSQL **55 passed**（68.90 秒）；迁移往返、前端 build/typecheck、API/web 镜像构建和依赖审计通过。首次隔离 PostgreSQL 备份恢复实际恢复 16 个合成工单，写入保持冻结；该次归档没有业务动作、附件或会话，不能将其解释为完整业务数据恢复验收。
+
+浏览器使用 editor 导入合成 Markdown 文档，后台完成章节索引后以不同的 reviewer 身份绑定验证工单审核发布，再撤回整份测试文档。界面条款同步显示已撤回，历史版本保留。验收修正了文档操作后条款列表不刷新及章节误显示单独发布按钮的问题；后台始终拒绝章节脱离文档发布。运维账号可查看实际缺项，上线门禁在本地演示保持 `release_ready=false`。前端生产构建与 TypeScript 检查再次通过。
+
+[文档发布界面](screenshots/knowledge-v02.jpg)
