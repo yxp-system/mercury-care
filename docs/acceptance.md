@@ -56,3 +56,11 @@ v0.2 提交 `e7604964d78d80eac06b9b00c09fe4e2e456c25d` 的 [CI](https://github.c
 浏览器使用 editor 导入合成 Markdown 文档，后台完成章节索引后以不同的 reviewer 身份绑定验证工单审核发布，再撤回整份测试文档。界面条款同步显示已撤回，历史版本保留。验收修正了文档操作后条款列表不刷新及章节误显示单独发布按钮的问题；后台始终拒绝章节脱离文档发布。运维账号可查看实际缺项，上线门禁在本地演示保持 `release_ready=false`。前端生产构建与 TypeScript 检查再次通过。
 
 [文档发布界面](screenshots/knowledge-v02.jpg)
+
+进一步提交 `2484df4e733f2710bf497fccbe58d94a8159f1c1` 的 [CI](https://github.com/yxp-system/mercury-care/actions/runs/45192579959) 全部通过，SQLite **54 passed, 1 skipped**（70.81 秒）、PostgreSQL **55 passed**（81.99 秒）。扩展恢复演练实际备份并恢复 16 工单、1 方案、1 批准、1 未知动作、1 待处理任务、1 附件和1浏览器会话；归档含数据库及附件两个文件。`recovery_drill.py verify` 检查原请求/方案关联保留、库存占用不变、附件 SHA256 正确、会话已撤销且刷新密文已清空、旧登录事务已清理、冻结实例拒绝派发动作，全部通过。恢复回执的 `external_recovery_window` 仍为 unverified；合成数据的耗时不能作为生产 RPO/RTO 指标。
+
+最终运维页面已提供中文缺项说明。本地 `release-check` 实际返回退出码 **2**，`release_ready=false`，符合当前未选型/未联调状态。390×844 手机视口下 `scrollWidth=clientWidth=375`，无页面横向溢出；当前浏览器记录中无 error/warn，检查后已恢复默认视口。
+
+![交接与上线条件](screenshots/release-v02.jpg)
+
+[手机运维页面](screenshots/release-mobile-v02.jpg)

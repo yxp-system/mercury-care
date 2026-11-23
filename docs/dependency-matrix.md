@@ -12,10 +12,12 @@
 | LangGraph | 1.2.24 | 受限工作流 |
 | PostgreSQL / SQLite checkpoint | 3.2.1 / 3.1.3 | 持久化恢复 |
 | PyJWT / pwdlib | 2.15.1 / 0.4.2 | 验签/Argon2 |
+| cryptography | 50.0.2 | RS256 与会话令牌 Fernet 加密 |
 | Next.js | 16.4.6 | 工作台与同源代理 |
 | React | 19.2.4 | 工作台组件 |
 | TypeScript | 5.9.3 | 静态类型 |
 | pgvector 容器 | 0.8.1-pg17 | 本地部署和CI测试服务 |
+| ClamAV 容器 | 1.4.3 | 企业部署覆盖配置的隔离扫描服务；实际部署待验 |
 
 已读取官方资料并按实际安装 API 编写：
 
