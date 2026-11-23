@@ -1,0 +1,65 @@
+name: mercurycare
+x-api: &api
+  build:
+    context: .
+    dockerfile: deploy/Dockerfile.api
+  env_file: .env
+  environment: &api-env
+    MERCURY_DATABASE_URL: postgresql+psycopg://mercury_app:${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD}@postgres:5432/mercury
+    MERCURY_DATA_DIR: /app/.data
+  volumes:
+    - app-data:/app/.data
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+  restart: unless-stopped
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg17
+    environment:
+      POSTGRES_USER: mercury_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: mercury
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U mercury_owner -d mercury]
+      interval: 5s
+      retries: 15
+    restart: unless-stopped
+  migrate:
+    <<: *api
+    environment:
+      <<: *api-env
+      MERCURY_DATABASE_URL: postgresql+psycopg://mercury_owner:${POSTGRES_PASSWORD}@postgres:5432/mercury
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "scripts/container_init.py"]
+    restart: "no"
+  api:
+    <<: *api
+    ports:
+      - "127.0.0.1:8040:8040"
+  worker:
+    <<: *api
+    command: ["python", "-m", "mercury.worker"]
+    healthcheck:
+      disable: true
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    environment:
+      MERCURY_API_URL: http://api:8040
+      MERCURY_PUBLIC_ORIGIN: http://localhost:3040
+    ports:
+      - "127.0.0.1:3040:3040"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  postgres-data:
+  app-data:

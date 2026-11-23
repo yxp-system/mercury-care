@@ -1,0 +1,71 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.1-pg17
+        env:
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: mercury_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mercury_test"
+          --health-interval 5s --health-timeout 5s --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install uv==0.11.30
+      - run: uv sync --frozen
+      - run: uv run ruff check apps/api tests scripts
+      - run: uv run ruff format --check apps/api tests scripts migrations
+      - run: uv run pytest -q --junitxml=.data/sqlite-tests.xml
+      - name: PostgreSQL contracts, RLS and process recovery
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://postgres:ci-test-only@localhost:5432/mercury_test
+        run: uv run pytest -q --junitxml=.data/postgres-tests.xml
+      - name: Migration round trip
+        env:
+          MERCURY_ENV: test
+          MERCURY_DATABASE_URL: postgresql+psycopg://postgres:ci-test-only@localhost:5432/mercury_test
+          MERCURY_JWT_SECRET: ci-test-only-signing-key-at-least-32-characters
+        run: |
+          uv run python -c "from mercury.config import Settings; from mercury.db import Database; from mercury.models import Base; db=Database(Settings()); Base.metadata.drop_all(db.engine)"
+          uv run python -m mercury.cli migrate
+          uv run alembic downgrade base
+          uv run python -m mercury.cli migrate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: .data/*tests.xml
+          include-hidden-files: true
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm audit --omit=dev --audit-level=high
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f deploy/Dockerfile.api -t mercury-api:ci .
+      - run: docker build -f deploy/Dockerfile.web -t mercury-web:ci .

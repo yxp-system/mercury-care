@@ -1,0 +1,16 @@
+FROM python:3.12.12-slim-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_LINK_MODE=copy PATH="/app/.venv/bin:$PATH"
+WORKDIR /app
+RUN pip install --no-cache-dir uv==0.11.30 && useradd --uid 10001 --create-home mercury
+COPY pyproject.toml uv.lock ./
+COPY apps/api ./apps/api
+RUN uv sync --frozen --no-dev
+COPY alembic.ini ./
+COPY migrations ./migrations
+COPY scripts ./scripts
+COPY .env.example ./
+RUN mkdir -p /app/.data && chown -R mercury:mercury /app
+USER mercury
+EXPOSE 8040
+HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8040/health/live')"
+CMD ["uvicorn", "mercury.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8040"]
