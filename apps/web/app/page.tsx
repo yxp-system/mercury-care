@@ -76,6 +76,7 @@ type Detail = CaseItem & {
   approvals: Item[];
   attachments: Item[];
   notifications: Item[];
+  notification_suggestion: string;
   runs?: (Item & { steps: Item[] })[];
   audit?: Item[];
 };
@@ -228,6 +229,7 @@ export default function Workspace() {
     [orders, setOrders] = useState<(Item & { lines: Item[] })[]>([]);
   const [form, setForm] = useState<Record<string, string>>({}),
     [message, setMessage] = useState("");
+  const [notificationBody, setNotificationBody] = useState("");
   const allowed = (...roles: string[]) =>
     Boolean(me?.roles.some((role) => roles.includes(role)));
 
@@ -255,6 +257,9 @@ export default function Workspace() {
     const timer = setTimeout(() => setToast(""), 4500);
     return () => clearTimeout(timer);
   }, [toast]);
+  useEffect(() => {
+    setNotificationBody(detail?.notification_suggestion || "");
+  }, [detail?.id, detail?.version, detail?.notification_suggestion]);
   useEffect(() => {
     if (!me) return;
     const path: Record<string, string> = {
@@ -1694,28 +1699,42 @@ export default function Workspace() {
                   {!!detail.runs?.length && detail.runs.at(-1)?.draft ? (
                     <section className="detail-section">
                       <h3>
-                        回复草稿 <span className="soft-label">待人工核对</span>
+                        分析时的回复草稿{" "}
+                        <span className="soft-label">历史参考</span>
                       </h3>
                       <div className="draft">
                         {text(detail.runs.at(-1)?.draft)}
                       </div>
-                      {allowed("agent") && (
-                        <button
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() =>
-                            act(
-                              `/cases/${detail.id}/notifications`,
-                              { body: text(detail.runs?.at(-1)?.draft) },
-                              "已提交本地通知任务",
-                            )
-                          }
-                        >
-                          确认并记录通知 <Send size={15} />
-                        </button>
-                      )}
                     </section>
                   ) : null}
+                  {allowed("agent") && (
+                    <section className="detail-section">
+                      <h3>
+                        客户通知 <span className="soft-label">请核对当前进度</span>
+                      </h3>
+                      <label>
+                        通知内容
+                        <textarea
+                          value={notificationBody}
+                          maxLength={4000}
+                          onChange={(event) => setNotificationBody(event.target.value)}
+                        />
+                      </label>
+                      <button
+                        className="secondary"
+                        disabled={busy || !notificationBody.trim()}
+                        onClick={() =>
+                          act(
+                            `/cases/${detail.id}/notifications`,
+                            { version: detail.version, body: notificationBody },
+                            "已提交本地通知任务",
+                          )
+                        }
+                      >
+                        确认并记录通知 <Send size={15} />
+                      </button>
+                    </section>
+                  )}
                   <div className="action-row closure-actions">
                     {allowed("customer") && (
                       <button

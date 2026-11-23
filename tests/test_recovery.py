@@ -72,7 +72,8 @@ def test_policy_withdrawn_after_approval_blocks_dispatch(client, db, headers):
 
 
 def test_notification_dedup_and_claim_independent_of_customer_case(client, db, headers):
-    notice = {"body": "目前正在核实订单，尚未安排补发。"}
+    detail = client.get(f"/api/cases/{MAIN}", headers=headers("agent")).json()
+    notice = {"version": detail["version"], "body": "目前正在核实订单，尚未安排补发。"}
     first = client.post(f"/api/cases/{MAIN}/notifications", headers=headers("agent"), json=notice)
     second = client.post(f"/api/cases/{MAIN}/notifications", headers=headers("agent"), json=notice)
     assert first.json()["id"] == second.json()["id"]
@@ -98,6 +99,24 @@ def test_notification_dedup_and_claim_independent_of_customer_case(client, db, h
     )
     assert response.status_code == 409
     assert client.get(f"/api/cases/{MAIN}", headers=headers()).json()["status"] == "open"
+
+
+def test_notification_requires_current_reviewed_case_version(client, db, headers):
+    detail = client.get(f"/api/cases/{MAIN}", headers=headers("agent")).json()
+    notice = {"version": detail["version"], "body": detail["notification_suggestion"]}
+    make_plan(client, headers)
+    stale = client.post(f"/api/cases/{MAIN}/notifications", headers=headers("agent"), json=notice)
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "version_conflict"
+    with db.session(CTX) as s:
+        assert s.scalar(select(Notification).where(Notification.case_id == MAIN)) is None
+        assert s.scalar(select(Job).where(Job.kind == "notification")) is None
+    current = client.get(f"/api/cases/{MAIN}", headers=headers("agent")).json()
+    assert current["notification_suggestion"] != detail["notification_suggestion"]
+    reviewed = {"version": current["version"], "body": current["notification_suggestion"]}
+    accepted = client.post(f"/api/cases/{MAIN}/notifications", headers=headers("agent"), json=reviewed)
+    assert accepted.status_code == 202
+    assert accepted.json()["body"] == reviewed["body"]
 
 
 def test_improvement_requires_review_sample_and_authorized_evidence(client, headers):

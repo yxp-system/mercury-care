@@ -25,6 +25,7 @@ from mercury.services import (
     record_dict,
     scope_values,
     search_policies,
+    status_message,
 )
 
 PROMPTS = Path(__file__).parent / "prompts"
@@ -295,13 +296,7 @@ def build_graph(db, ctx, run_id, saver):
         with db.session(ctx) as s:
             case = get_case(s, ctx, state["case_id"])
             status = case.status
-        status_text = {
-            "waiting_customer": "已形成处理建议，请先确认方案。确认后将交由店铺审核。",
-            "waiting_approval": "您已确认方案，目前正在等待店铺审核。",
-            "approved": "方案已通过审核，正在等待授权人员安排处理。",
-            "awaiting_fulfillment": "处理请求已受理，后续履约结果仍待核实。",
-            "awaiting_resolution": "已收到处理结果，请确认您的问题是否得到解决。",
-        }.get(status, "我们正在核实您的订单记录；尚未确认的信息会继续核查。")
+        status_text = status_message(status)
         output = gateway.call(
             "reply",
             {"status": status, "permitted_facts": status_text},

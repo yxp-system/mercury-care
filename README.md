@@ -6,6 +6,12 @@ MercuryCare 是一个跨境电商售后与经营协同应用，提供中文工�
 
 > 当前为 **v0.1 企业应用工程基线**：本地合成业务可运行并有自动化验证。真实 OIDC、模型效果、OMS/WMS、支付、物流、通知及生产恢复仍需企业配置与验收。它不是已经通过企业上线验收的成品。完整边界见 [接入矩阵](docs/integration-matrix.md) 和 [阶段进度](docs/progress.md)。
 
+[![CI](https://github.com/yxp-system/mercury-care/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yxp-system/mercury-care/actions/workflows/ci.yml?query=branch%3Amain)
+
+![MercuryCare 中文工作台：浏览器验收后主工单已结案](docs/screenshots/workspace.jpg)
+
+实际浏览器已完成客户确认、独立审批、执行、出库、送达、解决确认和客服结案。详见 [验收记录](docs/acceptance.md)。
+
 ## 功能
 
 - **售后工作台**：工单、订单行、沟通、证据附件、政策引用、方案版本、客户选择、审核和执行记录。

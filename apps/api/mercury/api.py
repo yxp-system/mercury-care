@@ -245,6 +245,7 @@ def create_app(settings=None):
         with db.session(ctx) as s:
             case = get_case(s, ctx, case_id)
             result = svc.record_dict(case)
+            result["notification_suggestion"] = svc.status_message(case.status)
             result["order"] = svc.record_dict(svc.owned(s, Order, ctx, case.order_id))
             result["line"] = svc.record_dict(svc.owned(s, OrderLine, ctx, case.line_id))
             for key, model in [
@@ -382,7 +383,7 @@ def create_app(settings=None):
 
     @app.post("/api/cases/{case_id}/notifications", status_code=202)
     def notification(case_id: str, payload: p.NotificationInput, ctx: Identity):
-        return svc.notify_customer(db, ctx, case_id, payload.body)
+        return svc.notify_customer(db, ctx, case_id, payload)
 
     @app.post("/api/cases/{case_id}/attachments", status_code=201)
     async def attachment(case_id: str, file: UploadFile, ctx: Identity):

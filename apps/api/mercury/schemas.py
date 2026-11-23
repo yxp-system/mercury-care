@@ -96,7 +96,7 @@ class PublishInput(StrictModel):
     note: str = Field(min_length=5, max_length=2000)
 
 
-class NotificationInput(StrictModel):
+class NotificationInput(VersionInput):
     body: str = Field(min_length=1, max_length=4000)
 
 

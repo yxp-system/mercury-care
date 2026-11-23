@@ -78,6 +78,19 @@ def check_version(case, expected):
     require(case.version == expected, "version_conflict", "记录已更新，请刷新后重新操作")
 
 
+def status_message(status):
+    return {
+        "waiting_customer": "已形成处理建议，请先确认方案。确认后将交由店铺审核。",
+        "waiting_approval": "您已确认方案，目前正在等待店铺审核。",
+        "approved": "方案已通过审核，正在等待授权人员安排处理。",
+        "processing": "处理请求正在核查中，尚未确认最终结果。",
+        "awaiting_fulfillment": "处理请求已受理，后续履约结果仍待核实。",
+        "awaiting_resolution": "已收到处理结果，请确认您的问题是否得到解决。",
+        "resolved": "已记录您确认问题解决的反馈，工单等待客服核查结案。",
+        "closed": "已根据您的解决确认完成结案。如仍有问题，请联系店铺继续处理。",
+    }.get(status, "我们正在核实您的订单记录；尚未确认的信息会继续核查。")
+
+
 def owned(s, model, ctx, identity, lock=False):
     query = select(model).where(model.id == identity, *scoped(model, ctx))
     if lock:
@@ -845,12 +858,15 @@ def policy_publish(db, ctx, policy_id, payload, *, withdraw=False):
         return record_dict(policy)
 
 
-def notify_customer(db, ctx, case_id, body):
+def notify_customer(db, ctx, case_id, payload):
     ctx.require_role("agent")
     require(db.settings.writes_enabled, "writes_frozen", "外发已冻结", 503)
     require(db.settings.business_mode == "synthetic", "integration_unconfigured", "通知服务尚未接入", 503)
     with db.session(ctx, write=True) as s:
         case = get_case(s, ctx, case_id, True)
+        check_version(case, payload.version)
+        body = payload.body.strip()
+        require(bool(body), "empty_notification", "请填写通知内容", 422)
         key = digest([ctx.tenant_id, ctx.store_id, case_id, case.customer_id, body])
         notification = s.scalar(select(Notification).where(Notification.intent_hash == key))
         if not notification:
@@ -864,7 +880,7 @@ def notify_customer(db, ctx, case_id, body):
             )
             s.add(notification)
             enqueue(s, ctx, "notification", notification.id, "notify:" + key)
-            audit(s, ctx, "notification.queued", case_id)
+            audit(s, ctx, "notification.queued", case_id, {"case_version": case.version})
         s.flush()
         return record_dict(notification)
 
