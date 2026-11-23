@@ -2,7 +2,6 @@ import hashlib
 import hmac
 import logging
 import time
-from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -10,14 +9,23 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from jwt import PyJWKClient
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
 from mercury import schemas as p
 from mercury import services as svc
+from mercury import sessions
+from mercury.attachments import read_attachment
 from mercury.auth import AuthContext, authenticate, get_case, login
 from mercury.config import Settings
 from mercury.db import Database, scoped
@@ -30,9 +38,11 @@ from mercury.models import (
     Case,
     Choice,
     Claim,
+    Escalation,
     Improvement,
     Inventory,
     Job,
+    KnowledgeDocument,
     Message,
     Notification,
     Order,
@@ -41,10 +51,12 @@ from mercury.models import (
     Policy,
     Run,
     RunStep,
+    Shipment,
     User,
     now,
     uid,
 )
+from mercury.runtime import cancel_run
 from mercury.workflow import start_run
 
 log = logging.getLogger("mercury.api")
@@ -62,10 +74,12 @@ def create_app(settings=None):
         yield
         db.engine.dispose()
 
-    app = FastAPI(title="MercuryCare", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="MercuryCare", version="0.2.0", lifespan=lifespan)
     app.state.settings, app.state.db = settings, db
     app.state.jwks = (
-        PyJWKClient(settings.oidc_jwks_url, cache_keys=True) if settings.auth_mode == "oidc" else None
+        PyJWKClient(settings.oidc_jwks_url, cache_jwk_set=True, lifespan=300, timeout=10)
+        if settings.auth_mode == "oidc"
+        else None
     )
     app.add_middleware(
         CORSMiddleware,
@@ -74,7 +88,6 @@ def create_app(settings=None):
         allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["Authorization", "Content-Type", "X-Tenant-Id", "X-Store-Id"],
     )
-    login_attempts = defaultdict(deque)
 
     @app.middleware("http")
     async def telemetry(request, call_next):
@@ -157,12 +170,27 @@ def create_app(settings=None):
     @app.post("/api/auth/login")
     def local_login(payload: p.LoginInput, request: Request):
         key = request.client.host if request.client else "unknown"
-        attempts = login_attempts[key]
-        while attempts and attempts[0] < now() - 60:
-            attempts.popleft()
-        require(len(attempts) < 15, "rate_limited", "登录尝试过多，请稍后重试", 429)
-        attempts.append(now())
+        sessions.rate_limit(db, "login-network:" + key, settings.login_attempts_per_minute * 20)
+        sessions.rate_limit(db, "login:" + key + ":" + payload.username, settings.login_attempts_per_minute)
         return login(db, payload.username, payload.password, payload.tenant_id, payload.store_id)
+
+    @app.get("/api/auth/config")
+    def auth_config():
+        return {"mode": settings.auth_mode, "browser_sso": bool(settings.oidc_client_id)}
+
+    @app.post("/api/auth/oidc/start")
+    def oidc_start(payload: p.OIDCStart, request: Request):
+        sessions.rate_limit(db, "oidc:" + (request.client.host if request.client else "unknown"), 30)
+        return sessions.begin_login(db, payload.tenant_id, payload.store_id)
+
+    @app.post("/api/auth/oidc/callback")
+    def oidc_callback(payload: p.OIDCCallback):
+        return sessions.finish_login(db, app.state.jwks, payload.state, payload.binding, payload.code)
+
+    @app.post("/api/auth/logout")
+    def logout(request: Request):
+        sessions.revoke_session(db, request.headers.get("authorization", "").removeprefix("Bearer "))
+        return {"ok": True}
 
     @app.get("/api/me")
     def me(ctx: Identity):
@@ -177,6 +205,16 @@ def create_app(settings=None):
                 "customer_id": ctx.customer_id,
                 "environment": settings.env,
             }
+
+    @app.get("/api/events")
+    async def subscribe(request: Request, ctx: Identity):
+        from mercury.streaming import events
+
+        return StreamingResponse(
+            events(request),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"},
+        )
 
     @app.get("/api/capabilities")
     def capabilities(ctx: Identity):
@@ -193,6 +231,13 @@ def create_app(settings=None):
                 {"name": name, "status": "not_connected"} for name in ["OMS", "WMS", "支付", "物流", "通知"]
             ],
         }
+
+    @app.get("/api/release-readiness")
+    def release_readiness(ctx: Identity):
+        ctx.require_role("operations")
+        from mercury.readiness import report
+
+        return report(db)
 
     @app.get("/api/orders")
     def orders(ctx: Identity):
@@ -242,6 +287,8 @@ def create_app(settings=None):
 
     @app.get("/api/cases/{case_id}")
     def case_detail(case_id: str, ctx: Identity):
+        from mercury.knowledge import can_read
+
         with db.session(ctx) as s:
             case = get_case(s, ctx, case_id)
             result = svc.record_dict(case)
@@ -264,12 +311,29 @@ def create_app(settings=None):
                     )
                 ]
             plans = [item["id"] for item in result["plans"]]
+            restricted_evidence = False
+            for plan in result["plans"]:
+                citations = list(
+                    s.scalars(select(Policy).where(*scoped(Policy, ctx), Policy.id.in_(plan["citations"])))
+                )
+                if any(not can_read(policy, ctx) for policy in citations):
+                    restricted_evidence = True
+                    plan["rationale"], plan["citations"] = "依据受限，仅授权人员可查看。", []
+            result["shipments"] = [
+                svc.record_dict(row)
+                for row in s.scalars(
+                    select(Shipment).where(
+                        *scoped(Shipment, ctx),
+                        Shipment.action_id.in_([item["id"] for item in result["actions"]]),
+                    )
+                )
+            ]
             for key, model in [("choices", Choice), ("approvals", Approval)]:
                 result[key] = [
                     svc.record_dict(row)
                     for row in s.scalars(select(model).where(*scoped(model, ctx), model.plan_id.in_(plans)))
                 ]
-            if not ctx.customer_id:
+            if not ctx.customer_id and not restricted_evidence:
                 result["runs"] = []
                 for run in s.scalars(
                     select(Run).where(*scoped(Run, ctx), Run.case_id == case_id).order_by(Run.created_at)
@@ -423,6 +487,8 @@ def create_app(settings=None):
                     scan_status="unscanned",
                 )
                 s.add(item)
+                if settings.scanner_mode == "clamav":
+                    svc.enqueue(s, ctx, "scan", identity, "scan:" + identity)
                 svc.audit(s, ctx, "attachment.received", case_id, {"attachment_id": identity})
                 s.flush()
                 return svc.record_dict(item)
@@ -436,19 +502,39 @@ def create_app(settings=None):
             item = svc.owned(s, Attachment, ctx, attachment_id)
             get_case(s, ctx, item.case_id)
             require(
-                item.scan_status == "clean" or settings.env in {"demo", "test"},
+                item.scan_status == "clean"
+                or (
+                    settings.env in {"demo", "test"}
+                    and settings.scanner_mode == "disabled"
+                    and item.scan_status == "unscanned"
+                ),
                 "quarantined",
                 "附件尚未通过安全扫描",
                 423,
             )
-            return FileResponse(
-                settings.data_dir / "uploads" / item.id,
-                filename=item.filename,
+            from urllib.parse import quote
+
+            content = read_attachment(db, item)
+            return Response(
+                content,
                 media_type="application/octet-stream",
+                headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(item.filename)},
             )
+
+    @app.post("/api/runs/{run_id}/cancel")
+    def stop_run(run_id: str, payload: p.ReasonInput, ctx: Identity):
+        return cancel_run(db, ctx, run_id, payload.reason)
+
+    @app.post("/api/notifications/{notification_id}/reconcile")
+    def reconcile_notice(notification_id: str, ctx: Identity):
+        from mercury.notifications import reconcile_notification
+
+        return reconcile_notification(db, ctx, notification_id)
 
     @app.get("/api/policies")
     def policies(ctx: Identity):
+        from mercury.knowledge import can_read
+
         ctx.require_role("agent", "approver", "knowledge", "knowledge_reviewer")
         with db.session(ctx) as s:
             return [
@@ -456,7 +542,63 @@ def create_app(settings=None):
                 for row in s.scalars(
                     select(Policy).where(*scoped(Policy, ctx)).order_by(Policy.created_at.desc())
                 )
+                if can_read(row, ctx) or ctx.roles.intersection({"knowledge", "knowledge_reviewer"})
             ]
+
+    @app.get("/api/knowledge/documents")
+    def documents(ctx: Identity):
+        ctx.require_role("knowledge", "knowledge_reviewer")
+        with db.session(ctx) as s:
+            return [
+                svc.record_dict(row) | {"content": None}
+                for row in s.scalars(
+                    select(KnowledgeDocument)
+                    .where(*scoped(KnowledgeDocument, ctx))
+                    .order_by(KnowledgeDocument.created_at.desc())
+                    .limit(100)
+                )
+            ]
+
+    @app.post("/api/knowledge/documents", status_code=202)
+    def import_knowledge(payload: p.DocumentInput, ctx: Identity):
+        from mercury.knowledge import import_document
+
+        return import_document(db, ctx, payload)
+
+    @app.post("/api/knowledge/documents/{document_id}/publish")
+    def publish_knowledge(document_id: str, payload: p.PublishInput, ctx: Identity):
+        from mercury.knowledge import publish_document
+
+        return publish_document(db, ctx, document_id, payload)
+
+    @app.post("/api/knowledge/documents/{document_id}/withdraw")
+    def withdraw_knowledge(document_id: str, payload: p.PublishInput, ctx: Identity):
+        from mercury.knowledge import publish_document
+
+        return publish_document(db, ctx, document_id, payload, withdraw=True)
+
+    @app.get("/api/escalations")
+    def escalations(ctx: Identity):
+        ctx.require_role("agent", "operations", "executor")
+        with db.session(ctx) as s:
+            return [
+                svc.record_dict(row)
+                for row in s.scalars(
+                    select(Escalation)
+                    .where(*scoped(Escalation, ctx))
+                    .order_by(Escalation.created_at.desc())
+                    .limit(100)
+                )
+            ]
+
+    @app.post("/api/escalations/{escalation_id}/acknowledge")
+    def acknowledge(escalation_id: str, payload: p.ReasonInput, ctx: Identity):
+        ctx.require_role("agent", "operations", "executor")
+        with db.session(ctx, write=True) as s:
+            item = svc.owned(s, Escalation, ctx, escalation_id, True)
+            item.status, item.owner_id, item.note = "acknowledged", ctx.user_id, payload.reason
+            svc.audit(s, ctx, "escalation.acknowledged", item.case_id, {"escalation_id": item.id})
+            return svc.record_dict(item)
 
     @app.post("/api/policies", status_code=201)
     def policy_draft(payload: p.PolicyInput, ctx: Identity):
@@ -538,6 +680,25 @@ def create_app(settings=None):
     @app.get("/metrics")
     def metrics(ctx: Identity):
         ctx.require_role("operations")
-        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+        registry = CollectorRegistry()
+        queue = Gauge("mercury_queue_jobs", "Jobs in the authorized store", ["status"], registry=registry)
+        unknown = Gauge(
+            "mercury_unknown_actions", "Actions requiring original-request reconciliation", registry=registry
+        )
+        age = Gauge(
+            "mercury_oldest_job_age_seconds", "Age of oldest pending or running job", registry=registry
+        )
+        with db.session(ctx) as s:
+            jobs = list(s.scalars(select(Job).where(*scoped(Job, ctx))))
+            for status in ("pending", "running", "dead", "done", "cancelled"):
+                queue.labels(status).set(sum(job.status == status for job in jobs))
+            unknown.set(
+                len(
+                    list(s.scalars(select(Action.id).where(*scoped(Action, ctx), Action.status == "unknown")))
+                )
+            )
+            active = [job.created_at for job in jobs if job.status in {"pending", "running"}]
+            age.set(max(0, now() - min(active)) if active else 0)
+        return Response(generate_latest() + generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
 
     return app

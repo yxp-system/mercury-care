@@ -15,3 +15,5 @@
 | [依赖](dependency-matrix.md) | 版本与官方资料 |
 | [限制](limitations.md) | 当前未交付或未验证能力 |
 | [原始需求](reference/implementation-prompts.zh-CN.md) | 用户提供的完整分阶段提示词，保留原文 |
+
+[v0.2 企业能力升级与配置](enterprise-upgrade.md)

@@ -84,6 +84,10 @@ def authenticate(
     settings = request.app.state.settings
     require(authorization.startswith("Bearer "), "unauthorized", "请先登录", 401)
     token = authorization.removeprefix("Bearer ")
+    if token.startswith("mc_") and settings.auth_mode == "oidc":
+        from mercury.sessions import resolve_session
+
+        return resolve_session(request.app.state.db, request.app.state.jwks, token)
     try:
         if settings.auth_mode == "local":
             claims = jwt.decode(

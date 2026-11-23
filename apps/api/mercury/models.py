@@ -57,6 +57,36 @@ class User(Record, Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class LoginTransaction(Record, Base):
+    __tablename__ = "login_transactions"
+    binding_hash: Mapped[str] = mapped_column(String(64))
+    verifier: Mapped[str] = mapped_column(Text)
+    nonce: Mapped[str] = mapped_column(String(100))
+    tenant_id: Mapped[str] = mapped_column(String(80))
+    store_id: Mapped[str] = mapped_column(String(80))
+    expires_at: Mapped[float] = mapped_column(Float)
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class BrowserSession(Record, Base):
+    __tablename__ = "browser_sessions"
+    user_id: Mapped[str] = mapped_column(String(80), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(80))
+    store_id: Mapped[str] = mapped_column(String(80))
+    refresh_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    provider_expires_at: Mapped[float] = mapped_column(Float)
+    expires_at: Mapped[float] = mapped_column(Float)
+    last_seen_at: Mapped[float] = mapped_column(Float, default=now)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class RateBucket(Base):
+    __tablename__ = "rate_buckets"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[float] = mapped_column(Float, index=True)
+
+
 class Membership(Scoped, Base):
     __tablename__ = "memberships"
     user_id: Mapped[str] = mapped_column(String(80), index=True)
@@ -229,6 +259,35 @@ class StockLedger(Scoped, Base):
     __table_args__ = (parent_key("action_id", "actions"), UniqueConstraint("action_id", "kind"))
 
 
+class Shipment(Scoped, Base):
+    __tablename__ = "shipments"
+    action_id: Mapped[str] = mapped_column(String(80))
+    package_id: Mapped[str] = mapped_column(String(100))
+    quantity: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(24), default="shipped")
+    evidence: Mapped[str] = mapped_column(Text)
+    delivered_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    __table_args__ = (
+        parent_key("action_id", "actions"),
+        UniqueConstraint("action_id", "package_id"),
+        CheckConstraint("quantity > 0"),
+    )
+
+
+class KnowledgeDocument(Scoped, Base):
+    __tablename__ = "knowledge_documents"
+    family: Mapped[str] = mapped_column(String(80))
+    version: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(200))
+    content: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="queued")
+    metadata_json: Mapped[dict] = mapped_column(JSON)
+    author_id: Mapped[str] = mapped_column(String(80))
+    reviewer_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    __table_args__ = (UniqueConstraint("tenant_id", "store_id", "family", "version"), scoped_key())
+
+
 class Policy(Scoped, Base):
     __tablename__ = "policies"
     family: Mapped[str] = mapped_column(String(80))
@@ -247,6 +306,10 @@ class Policy(Scoped, Base):
     content_hash: Mapped[str] = mapped_column(String(64))
     embedding: Mapped[list | None] = mapped_column(Vector(1536).with_variant(JSON, "sqlite"), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    document_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    section: Mapped[str] = mapped_column(String(200), default="")
+    allowed_roles: Mapped[list] = mapped_column(JSON, default=list)
+    allowed_users: Mapped[list] = mapped_column(JSON, default=list)
     __table_args__ = (UniqueConstraint("tenant_id", "store_id", "family", "version"),)
 
 
@@ -263,6 +326,8 @@ class Run(Scoped, Base):
     waiting_reason: Mapped[str] = mapped_column(Text, default="")
     draft: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str] = mapped_column(Text, default="")
+    deadline_at: Mapped[float] = mapped_column(Float, default=0)
+    cancelled_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     __table_args__ = (scoped_key(), parent_key("case_id", "cases"))
 
 
@@ -313,7 +378,24 @@ class Notification(Scoped, Base):
     request_id: Mapped[str] = mapped_column(String(80), unique=True, default=uid)
     intent_hash: Mapped[str] = mapped_column(String(64), unique=True)
     receipt: Mapped[dict] = mapped_column(JSON, default=dict)
+    case_version: Mapped[int] = mapped_column(Integer, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[float] = mapped_column(Float, default=now)
     __table_args__ = (parent_key("case_id", "cases"),)
+
+
+class Escalation(Scoped, Base):
+    __tablename__ = "escalations"
+    case_id: Mapped[str] = mapped_column(String(80))
+    reason: Mapped[str] = mapped_column(String(80))
+    scope_version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(24), default="open")
+    owner_id: Mapped[str] = mapped_column(String(80), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    __table_args__ = (
+        parent_key("case_id", "cases"),
+        UniqueConstraint("tenant_id", "store_id", "case_id", "reason", "scope_version"),
+    )
 
 
 class Claim(Scoped, Base):

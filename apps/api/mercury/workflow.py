@@ -15,6 +15,7 @@ from mercury.auth import get_case, load_identity
 from mercury.db import scoped
 from mercury.errors import DomainError, require
 from mercury.models import Approval, Choice, Plan, Run, RunStep, now, uid
+from mercury.runtime import ensure_run
 from mercury.schemas import PlanInput, RoleOutput, SupervisorOutput
 from mercury.services import (
     audit,
@@ -49,6 +50,7 @@ class Gateway:
         self.db, self.ctx, self.run_id = db, ctx, run_id
 
     def call(self, role, context, schema, test_output):
+        ensure_run(self.db, self.ctx, self.run_id)
         settings = self.db.settings
         prompt = (PROMPTS / f"{role}.md").read_text(encoding="utf-8")
         request_context = json.dumps(context, ensure_ascii=False)
@@ -120,6 +122,7 @@ class Gateway:
                         usage=usage,
                     )
                 )
+            ensure_run(self.db, self.ctx, self.run_id)
             return output
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
             with self.db.session(self.ctx, write=True) as s:
@@ -141,7 +144,12 @@ def start_run(db, ctx, case_id):
             return record_dict(existing)
         require(case.status not in {"closed", "resolved"}, "case_closed", "请先重开工单")
         run = Run(
-            **scope_values(ctx), id=uid(), case_id=case_id, actor_id=ctx.user_id, input_version=case.version
+            **scope_values(ctx),
+            id=uid(),
+            case_id=case_id,
+            actor_id=ctx.user_id,
+            input_version=case.version,
+            deadline_at=now() + db.settings.run_timeout_seconds,
         )
         s.add(run)
         s.flush()
@@ -334,6 +342,15 @@ def build_graph(db, ctx, run_id, saver):
         require(valid, "approval_required", "尚未取得有效客户确认和审批")
         return {"released": True, "draft": ""}
 
+    def guarded(node):
+        def invoke(state):
+            ensure_run(db, ctx, run_id)
+            result = node(state)
+            ensure_run(db, ctx, run_id)
+            return result
+
+        return invoke
+
     builder = StateGraph(State)
     for name, node in {
         "supervisor": supervisor,
@@ -343,7 +360,7 @@ def build_graph(db, ctx, run_id, saver):
         "reply": reply_node,
         "wait": wait_node,
     }.items():
-        builder.add_node(name, node)
+        builder.add_node(name, guarded(node))
     builder.add_edge(START, "supervisor")
     builder.add_conditional_edges(
         "supervisor",
@@ -356,6 +373,7 @@ def build_graph(db, ctx, run_id, saver):
 
 
 def run_workflow(db, job_ctx, run_id):
+    ensure_run(db, job_ctx, run_id)
     with db.session(job_ctx) as s:
         run = s.scalar(select(Run).where(Run.id == run_id, *scoped(Run, job_ctx)))
         require(run, "run_not_found", "运行不存在", 404)
@@ -407,15 +425,20 @@ def run_workflow(db, job_ctx, run_id):
         else:
             argument = {"run_id": run_id, "case_id": case_id}
         with db.session(ctx, write=True) as s:
-            s.execute(update(Run).where(Run.id == run_id).values(status="running", error=""))
+            s.execute(
+                update(Run)
+                .where(Run.id == run_id, Run.cancelled_at.is_(None), Run.status != "timed_out")
+                .values(status="running", error="", deadline_at=now() + db.settings.run_timeout_seconds)
+            )
         result = graph.invoke(argument, config)
         waiting = bool(result.get("__interrupt__"))
         with db.session(ctx, write=True) as s:
             s.execute(
                 update(Run)
-                .where(Run.id == run_id)
+                .where(Run.id == run_id, Run.cancelled_at.is_(None), Run.status != "timed_out")
                 .values(
                     status="waiting" if waiting else "completed",
                     waiting_reason="客户确认 / 人工审批" if waiting else "",
+                    deadline_at=now() + db.settings.waiting_timeout_hours * 3600 if waiting else 0,
                 )
             )

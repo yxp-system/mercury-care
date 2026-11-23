@@ -25,6 +25,17 @@ class LoginInput(StrictModel):
     store_id: str = "uk"
 
 
+class OIDCStart(StrictModel):
+    tenant_id: str = Field(min_length=1, max_length=80, pattern="^[a-zA-Z0-9_-]+$")
+    store_id: str = Field(min_length=1, max_length=80, pattern="^[a-zA-Z0-9_-]+$")
+
+
+class OIDCCallback(StrictModel):
+    state: str = Field(min_length=20, max_length=100)
+    binding: str = Field(min_length=20, max_length=100)
+    code: str = Field(min_length=1, max_length=4000)
+
+
 class CaseInput(StrictModel):
     order_id: str = Field(max_length=80)
     line_id: str = Field(max_length=80)
@@ -75,9 +86,15 @@ class EventInput(StrictModel):
         pattern="^(shipped|delivered|succeeded|failed|received|inspected|investigated|cancelled)$"
     )
     evidence: str = Field(min_length=3, max_length=2000)
+    package_id: str = Field(default="", max_length=100)
+    quantity: int | None = Field(default=None, gt=0)
 
 
 class ClosureInput(VersionInput):
+    reason: str = Field(min_length=3, max_length=2000)
+
+
+class ReasonInput(StrictModel):
     reason: str = Field(min_length=3, max_length=2000)
 
 
@@ -89,6 +106,20 @@ class PolicyInput(StrictModel):
     region: str = Field(pattern="^[A-Z]{2}$", default="GB")
     effective_from: float
     effective_until: float
+    allowed_roles: list[str] = Field(default_factory=list, max_length=20)
+    allowed_users: list[str] = Field(default_factory=list, max_length=200)
+
+
+class DocumentInput(StrictModel):
+    family: str = Field(min_length=3, max_length=80)
+    title: str = Field(min_length=3, max_length=200)
+    content: str = Field(min_length=20, max_length=200000)
+    kind: Kind
+    region: str = Field(pattern="^[A-Z]{2}$", default="GB")
+    effective_from: float
+    effective_until: float
+    allowed_roles: list[str] = Field(default_factory=list, max_length=20)
+    allowed_users: list[str] = Field(default_factory=list, max_length=200)
 
 
 class PublishInput(StrictModel):

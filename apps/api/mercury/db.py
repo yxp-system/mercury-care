@@ -28,6 +28,10 @@ class Database:
 
     @contextmanager
     def session(self, scope=None, *, write=False):
+        if write:
+            from mercury.runtime import ensure_lease
+
+            ensure_lease()
         with self.factory() as session:
             try:
                 # Serialize SQLite demo writes before reading authorization/resource snapshots.

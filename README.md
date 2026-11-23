@@ -4,7 +4,7 @@
 
 MercuryCare 是一个跨境电商售后与经营协同应用，提供中文工作台、受限五角色协作、人工审批、可追溯执行和经营复查。前端使用 Next.js / TypeScript，后端使用 FastAPI / SQLAlchemy，工作流使用 LangGraph，支持 PostgreSQL / pgvector 和本地 SQLite 演示。
 
-> 当前为 **v0.1 企业应用工程基线**：本地合成业务可运行并有自动化验证。真实 OIDC、模型效果、OMS/WMS、支付、物流、通知及生产恢复仍需企业配置与验收。它不是已经通过企业上线验收的成品。完整边界见 [接入矩阵](docs/integration-matrix.md) 和 [阶段进度](docs/progress.md)。
+> 当前为 **v0.2 企业能力升级版**：已实现企业浏览器登录流程、持久任务接管、分包履约、知识导入与权限、扫描隔离及备份恢复工具。供应商和部署目标尚未选定，真实业务集成与生产验收仍待完成。完整边界见 [升级说明](docs/enterprise-upgrade.md)、[接入矩阵](docs/integration-matrix.md) 和 [阶段进度](docs/progress.md)。
 
 [![CI](https://github.com/yxp-system/mercury-care/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yxp-system/mercury-care/actions/workflows/ci.yml?query=branch%3Amain)
 
@@ -21,6 +21,8 @@ MercuryCare 是一个跨境电商售后与经营协同应用，提供中文工�
 - **团队与数据**：JWT/OIDC 验证、服务端岗位授权、租户/店铺范围、客户归属、PostgreSQL 行级策略、审计记录、规则独立审核。
 - **经营协同**：订单去重统计、整改假设和复查、独立内部索赔、规则草稿/审核/撤回、版本保留。
 - **交付工具**：Alembic 迁移、健康检查、Prometheus 指标、Docker Compose、CI 和隔离备份验证。
+- **企业身份与协作**：OIDC/PKCE、加密刷新令牌与可撤销会话、共享限流、鉴权 SSE、任务取消、租约续期及超时接管。
+- **资料与履约**：后台文档分块导入、人员/岗位 ACL、整份文档审核切换、ClamAV 隔离扫描、逐包出库/送达、通知原请求核查。
 
 ## 快速运行
 
@@ -134,6 +136,8 @@ flowchart LR
 外部平台的接口、授权、幂等和查询语义无法从提示词推导。当前 `external` 模式明确拒绝未接入的读取和写入，生产就绪检查会指出缺失集成。没有预填通过率、伪造真实模型结果或上线签署。
 
 完整说明：[文档索引](docs/index.md) · [已知限制](docs/limitations.md) · [原始分阶段需求](docs/reference/implementation-prompts.zh-CN.md)
+
+企业能力配置、迁移和验收入口：[v0.2 升级说明](docs/enterprise-upgrade.md)。运行 `uv run python -m mercury.cli release-check` 查看尚未满足的上线条件；未通过时不会给出上线就绪结论。
 
 ## 开源
 

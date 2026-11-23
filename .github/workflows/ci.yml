@@ -26,6 +26,8 @@ jobs:
       - run: uv sync --frozen
       - run: uv run ruff check apps/api tests scripts
       - run: uv run ruff format --check apps/api tests scripts migrations
+      - run: uv run python scripts/check_repository.py
+      - run: uv run --with pip-audit==2.9.0 pip-audit --skip-editable
       - run: uv run pytest -q --junitxml=.data/sqlite-tests.xml
       - name: PostgreSQL contracts, RLS and process recovery
         env:
@@ -41,11 +43,31 @@ jobs:
           uv run python -m mercury.cli migrate
           uv run alembic downgrade base
           uv run python -m mercury.cli migrate
+      - name: PostgreSQL backup client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client-17
+      - name: Isolated PostgreSQL backup and restore
+        env:
+          MERCURY_ENV: test
+          MERCURY_DATABASE_URL: postgresql+psycopg://postgres:ci-test-only@localhost:5432/mercury_test
+          MERCURY_JWT_SECRET: ci-test-only-signing-key-at-least-32-characters
+          MERCURY_DEMO_PASSWORD: TestPassword-123!
+          MERCURY_WRITES_ENABLED: 'false'
+          PGPASSWORD: ci-test-only
+        run: |
+          export PATH=/usr/lib/postgresql/17/bin:$PATH
+          uv run python -m mercury.cli seed
+          uv run python scripts/postgres_recovery.py backup .data/postgres-backup --workers-stopped
+          createdb -h localhost -U postgres mercury_restore_test
+          MERCURY_DATABASE_URL=postgresql+psycopg://postgres:ci-test-only@localhost:5432/mercury_restore_test MERCURY_DATA_DIR=.data/restored uv run python scripts/postgres_recovery.py restore .data/postgres-backup --workers-stopped
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results
-          path: .data/*tests.xml
+          path: |
+            .data/*tests.xml
+            .data/restored/recovery-report.json
           include-hidden-files: true
   frontend:
     runs-on: ubuntu-latest

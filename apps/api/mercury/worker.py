@@ -12,8 +12,9 @@ from mercury.auth import AuthContext
 from mercury.config import Settings
 from mercury.db import Database
 from mercury.errors import DomainError, require
-from mercury.models import Job, Notification, Run, now, uid
-from mercury.services import dispatch_action, owned
+from mercury.models import Job, Run, now, uid
+from mercury.runtime import renew_lease, schedule_escalations
+from mercury.services import dispatch_action
 from mercury.workflow import run_workflow
 
 log = logging.getLogger("mercury.worker")
@@ -26,10 +27,20 @@ def target_lock(db, target_id):
     if db.engine.dialect.name == "postgresql":
         with db.engine.connect() as conn:
             acquired = conn.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": key})
+            backend_id = conn.scalar(text("SELECT pg_backend_pid()"))
             conn.commit()
             require(acquired, "target_busy", "已有工作进程持有此任务", 503)
             try:
-                yield
+
+                def check_lock():
+                    require(
+                        conn.scalar(text("SELECT pg_backend_pid()")) == backend_id,
+                        "stale_worker",
+                        "运行锁连接已改变",
+                    )
+                    conn.commit()
+
+                yield check_lock
             finally:
                 conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
                 conn.commit()
@@ -56,7 +67,7 @@ def target_lock(db, target_id):
                 except BlockingIOError:
                     raise DomainError("target_busy", "任务已被占用", 503) from None
             try:
-                yield
+                yield lambda: None
             finally:
                 if os.name == "nt":
                     handle.seek(0)
@@ -80,7 +91,11 @@ def claim_job(db, owner):
         job = s.scalar(query.limit(1))
         if not job:
             return None
-        job.status, job.lease_owner, job.lease_until = "running", owner, now() + 120
+        job.status, job.lease_owner, job.lease_until = (
+            "running",
+            owner,
+            now() + db.settings.worker_lease_seconds,
+        )
         job.fence += 1
         job.attempts += 1
         s.flush()
@@ -96,7 +111,7 @@ def process_one(db, owner=None):
     error = ""
     status = "done"
     try:
-        with target_lock(db, job["target_id"]):
+        with target_lock(db, job["target_id"]) as lock_guard, renew_lease(db, job, owner, lock_guard):
             # A stale lease may acquire the target lock later; verify fencing before any effect.
             with db.session() as s:
                 current = s.get(Job, job["id"])
@@ -110,21 +125,17 @@ def process_one(db, owner=None):
             elif job["kind"] == "action":
                 dispatch_action(db, ctx, job["target_id"])
             elif job["kind"] == "notification":
-                require(
-                    db.settings.writes_enabled and db.settings.business_mode == "synthetic",
-                    "notification_unavailable",
-                    "通知接口未接入或已冻结",
-                    503,
-                )
-                with db.session(ctx, write=True) as s:
-                    notice = owned(s, Notification, ctx, job["target_id"], True)
-                    if notice.status == "pending":
-                        notice.status = "delivered"
-                        notice.receipt = {
-                            "source": "synthetic",
-                            "request_id": notice.request_id,
-                            "description": "本地通知记录；未向外部客户发送",
-                        }
+                from mercury.notifications import dispatch_notification
+
+                dispatch_notification(db, ctx, job["target_id"])
+            elif job["kind"] == "scan":
+                from mercury.attachments import scan_attachment
+
+                scan_attachment(db, ctx, job["target_id"])
+            elif job["kind"] == "knowledge":
+                from mercury.knowledge import process_import
+
+                process_import(db, ctx, job["target_id"])
             else:
                 raise DomainError("unknown_job", "不支持的任务类型")
     except Exception as exc:
@@ -137,7 +148,18 @@ def process_one(db, owner=None):
         log.warning("job_failed kind=%s code=%s attempt=%s", job["kind"], error, job["attempts"])
         if job["kind"] == "run" and status == "dead":
             with db.session(ctx, write=True) as s:
-                s.execute(update(Run).where(Run.id == job["target_id"]).values(status="failed", error=error))
+                run_status = (
+                    "cancelled"
+                    if error == "run_cancelled"
+                    else "timed_out"
+                    if error == "run_timeout"
+                    else "failed"
+                )
+                s.execute(
+                    update(Run)
+                    .where(Run.id == job["target_id"], Run.status.not_in(["cancelled", "timed_out"]))
+                    .values(status=run_status, error=error)
+                )
     with db.session(write=True) as s:
         s.execute(
             update(Job)
@@ -155,6 +177,7 @@ def main():
     db = Database(Settings())
     owner = uid()
     stopping = False
+    next_schedule = 0
 
     def stop(*_):
         nonlocal stopping
@@ -163,6 +186,9 @@ def main():
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
     while not stopping:
+        if now() >= next_schedule:
+            schedule_escalations(db)
+            next_schedule = now() + 30
         worked = process_one(db, owner)
         if args.once:
             break

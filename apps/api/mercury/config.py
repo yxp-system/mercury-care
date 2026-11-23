@@ -17,6 +17,22 @@ class Settings(BaseSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""
     oidc_jwks_url: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: SecretStr = SecretStr("")
+    oidc_authorization_url: str = ""
+    oidc_token_url: str = ""
+    oidc_redirect_uri: str = ""
+    session_encryption_keys: list[SecretStr] = []
+    session_hours: int = 8
+    session_idle_minutes: int = 30
+    login_attempts_per_minute: int = 15
+    scanner_mode: Literal["disabled", "clamav"] = "disabled"
+    clamav_host: str = "clamav"
+    clamav_port: int = 3310
+    scanner_timeout: int = 15
+    worker_lease_seconds: int = 120
+    run_timeout_seconds: int = 600
+    waiting_timeout_hours: int = 48
     model_mode: Literal["deterministic_test", "real"] = "deterministic_test"
     business_mode: Literal["synthetic", "external"] = "synthetic"
     llm_base_url: str = "https://api.openai.com/v1"
@@ -46,6 +62,34 @@ class Settings(BaseSettings):
             (self.oidc_issuer, self.oidc_audience, self.oidc_jwks_url.startswith("https://"))
         ):
             raise ValueError("OIDC requires a fixed HTTPS JWKS URL, issuer and audience")
+        if self.oidc_client_id:
+            from cryptography.fernet import Fernet
+
+            for endpoint in (
+                self.oidc_issuer,
+                self.oidc_authorization_url,
+                self.oidc_token_url,
+                self.oidc_redirect_uri,
+            ):
+                parsed = urlparse(endpoint)
+                if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.fragment:
+                    raise ValueError("Browser OIDC requires fixed HTTPS endpoints without credentials")
+            if not self.session_encryption_keys:
+                raise ValueError("Browser OIDC requires an encryption key for stored provider tokens")
+            for key in self.session_encryption_keys:
+                Fernet(key.get_secret_value().encode())
+        if (
+            min(
+                self.session_hours,
+                self.session_idle_minutes,
+                self.worker_lease_seconds,
+                self.run_timeout_seconds,
+                self.waiting_timeout_hours,
+                self.login_attempts_per_minute,
+            )
+            <= 0
+        ):
+            raise ValueError("Timeouts, budgets and rate limits must be positive")
         if self.model_mode == "real" and not (self.llm_model and self.llm_api_key.get_secret_value()):
             raise ValueError("Real model mode requires a model and API key; no test fallback exists")
         endpoint = urlparse(self.llm_base_url)

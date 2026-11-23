@@ -13,7 +13,7 @@ from mercury.workflow import checkpointer
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["configure", "migrate", "seed", "check"])
+    parser.add_argument("command", choices=["configure", "migrate", "seed", "check", "release-check"])
     args = parser.parse_args()
     if args.command == "configure":
         path = Path(".env")
@@ -30,6 +30,14 @@ def main():
         return
     settings = Settings()
     db = Database(settings)
+    if args.command == "release-check":
+        import json
+
+        from mercury.readiness import report
+
+        result = report(db)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        raise SystemExit(0 if result["release_ready"] else 2)
     if args.command == "migrate":
         command.upgrade(Config("alembic.ini"), "head")
         if db.engine.dialect.name == "postgresql":

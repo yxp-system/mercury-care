@@ -1,0 +1,21 @@
+groups:
+  - name: mercurycare
+    rules:
+      - alert: MercuryHighErrorRate
+        expr: sum(rate(mercury_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(mercury_http_requests_total[5m])), 0.01) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "MercuryCare API error rate exceeds the sample 5% threshold"
+      - alert: MercuryDeadJobs
+        expr: mercury_queue_jobs{status="dead"} > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "MercuryCare jobs require operator review"
+      - alert: MercuryUnknownAction
+        expr: mercury_unknown_actions > 0
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "Reconcile original provider requests before retrying actions"

@@ -24,6 +24,7 @@ with psycopg.connect(url) as connection:
     connection.execute("GRANT USAGE ON SCHEMA public TO mercury_app")
     connection.execute("GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO mercury_app")
     connection.execute("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO mercury_app")
+    connection.execute("GRANT DELETE ON login_transactions, rate_buckets TO mercury_app")
     # Append-only legal records; runtime cannot overwrite or delete past choices and decisions.
     connection.execute(
         "REVOKE UPDATE ON audit, approvals, choices, business_events, stock_ledger FROM mercury_app"

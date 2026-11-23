@@ -1221,6 +1221,21 @@ tbody tr:last-child td {
   color: #839671;
   margin-bottom: 13px;
 }
+.enterprise-panel {
+  padding: 24px;
+  margin-top: 24px;
+}
+.enterprise-panel .panel-heading {
+  padding: 0 0 20px;
+}
+.enterprise-panel form, .enterprise-panel > .enterprise-grid {
+  margin-bottom: 24px;
+}
+.enterprise-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  gap: 16px;
+}
 .drawer-footer {
   display: flex;
   justify-content: space-between;

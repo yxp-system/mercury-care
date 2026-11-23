@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import EnterprisePanel from "./enterprise-panel";
 import {
   Activity,
   ArrowDownLeft,
@@ -76,6 +77,7 @@ type Detail = CaseItem & {
   approvals: Item[];
   attachments: Item[];
   notifications: Item[];
+  shipments: Item[];
   notification_suggestion: string;
   runs?: (Item & { steps: Item[] })[];
   audit?: Item[];
@@ -124,6 +126,8 @@ const statusNames: Record<string, string> = {
   waiting_approval: "待审核",
   approved: "已批准",
   processing: "处理中",
+  partially_shipped: "部分出库",
+  timed_out: "已超时",
   awaiting_fulfillment: "待履约",
   awaiting_resolution: "待确认解决",
   needs_review: "待复核",
@@ -166,6 +170,7 @@ const navigation = [
   { id: "inventory", label: "库存台账", icon: Boxes },
   { id: "improvements", label: "整改与索赔", icon: FileCheck2 },
   { id: "jobs", label: "运行记录", icon: Activity },
+  { id: "release", label: "交接与上线", icon: ShieldCheck },
 ];
 
 async function api<T>(
@@ -221,6 +226,9 @@ export default function Workspace() {
     [busy, setBusy] = useState(false);
   const [username, setUsername] = useState("demo"),
     [password, setPassword] = useState("");
+  const [authMode, setAuthMode] = useState("local");
+  const [loginTenant, setLoginTenant] = useState("");
+  const [loginStore, setLoginStore] = useState("");
   const [items, setItems] = useState<Item[]>([]),
     [claims, setClaims] = useState<Item[]>([]);
   const [rules, setRules] = useState<Item[]>([]),
@@ -244,6 +252,8 @@ export default function Workspace() {
     else setStats(null);
   }, [me?.customer_id]);
   useEffect(() => {
+    api<{mode:string}>("/auth/config").then((config) => setAuthMode(config.mode)).catch(() => {});
+    if (new URLSearchParams(window.location.search).has("login_error")) setError("企业登录失败或已过期，请重新发起登录");
     api<Me>("/me")
       .then(setMe)
       .catch(() => {})
@@ -251,6 +261,13 @@ export default function Workspace() {
   }, []);
   useEffect(() => {
     if (me) reload().catch((e) => setError(e.message));
+  }, [me, reload]);
+  useEffect(() => {
+    if (!me) return;
+    const events = new EventSource("/api/events");
+    events.addEventListener("refresh", () => { void reload().catch(() => {}); });
+    events.addEventListener("session_expired", () => { events.close(); setMe(null); setDetail(null); setStats(null); });
+    return () => events.close();
   }, [me, reload]);
   useEffect(() => {
     if (!toast) return;
@@ -326,6 +343,10 @@ export default function Workspace() {
   }
   async function submitLogin(e: React.FormEvent) {
     e.preventDefault();
+    if (authMode === "oidc") {
+      window.location.assign(`/api/auth/oidc/start?tenant=${encodeURIComponent(loginTenant)}&store=${encodeURIComponent(loginStore)}`);
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -520,6 +541,11 @@ export default function Workspace() {
             <span className="eyebrow">YOUR WORKSPACE</span>
             <h2>欢迎回来</h2>
             <p className="muted">登录后继续处理店铺售后事务。</p>
+            {authMode === "oidc" ? <>
+              <label>组织标识<input value={loginTenant} onChange={(event) => setLoginTenant(event.target.value)} required pattern="[a-zA-Z0-9_-]+" /></label>
+              <label>店铺标识<input value={loginStore} onChange={(event) => setLoginStore(event.target.value)} required pattern="[a-zA-Z0-9_-]+" /></label>
+              <p className="muted">使用企业身份登录，访问范围由已分配的店铺权限决定。</p>
+            </> : <>
             <label>
               账号
               <input
@@ -539,6 +565,7 @@ export default function Workspace() {
                 required
               />
             </label>
+            </>}
             {error && (
               <p role="alert" className="error">
                 {error}
@@ -549,11 +576,11 @@ export default function Workspace() {
                 <Loader2 className="spin" size={18} />
               ) : (
                 <>
-                  登录工作台 <ArrowRight size={18} />
+                  {authMode === "oidc" ? "使用企业账号登录" : "登录工作台"} <ArrowRight size={18} />
                 </>
               )}
             </button>
-            <div className="demo-note">
+            {authMode === "local" && <div className="demo-note">
               <ShieldCheck size={20} />
               <div>
                 <strong>本地演示环境</strong>
@@ -562,7 +589,7 @@ export default function Workspace() {
                   MercuryDemo-2026!。客户账号 customer 用于确认方案。
                 </p>
               </div>
-            </div>
+            </div>}
           </form>
         </section>
       </main>
@@ -600,7 +627,7 @@ export default function Workspace() {
         >
           <span className="store-avatar">N</span>
           <span>
-            <strong>Northstar Living</strong>
+            <strong>{me.tenant_id === "northstar" ? "Northstar Living" : me.tenant_id}</strong>
             <small>{me.store_id.toUpperCase()} 店铺工作空间</small>
           </span>
           <ChevronDown size={15} />
@@ -609,7 +636,7 @@ export default function Workspace() {
         <nav>
           {navigation
             .filter(
-              (n) => !me.customer_id || ["overview", "cases"].includes(n.id),
+              (n) => (!me.customer_id || ["overview", "cases"].includes(n.id)) && (n.id !== "release" || allowed("operations")),
             )
             .map((n) => (
               <button
@@ -968,7 +995,7 @@ export default function Workspace() {
                     </div>
                     <div className="health-row">
                       <span>业务数据</span>
-                      <span className="green-text">合成演示</span>
+                      <span className="green-text">{caps?.business === "synthetic" ? "合成演示" : "企业业务"}</span>
                     </div>
                     <div className="health-row">
                       <span>模型运行</span>
@@ -982,7 +1009,7 @@ export default function Workspace() {
                       <span>外部系统</span>
                       <span className="muted">等待企业接入</span>
                     </div>
-                    <p>当前演示不会执行真实退款或向客户发送消息。</p>
+                    <p>{caps?.business === "synthetic" ? "当前演示不会执行真实退款或向客户发送消息。" : "具体业务能力以接入与上线门禁为准。"}</p>
                   </section>
                 </aside>
               )}
@@ -1080,7 +1107,7 @@ export default function Workspace() {
                       <TrendingUp size={18} />
                     </div>
                     <strong>{value}</strong>
-                    <p>当前店铺 · 全部时间 · 合成记录</p>
+                    <p>当前店铺 · 全部时间 · {caps?.business === "synthetic" ? "合成记录" : "业务记录"}</p>
                   </article>
                 ))}
               </div>
@@ -1105,12 +1132,14 @@ export default function Workspace() {
                   </div>
                 ))}
                 <p className="muted">
-                  统计反映当前合成数据，不代表企业业务收益或生产容量。
+                  统计按当前店铺的实际业务记录计算；不由模型生成。
                 </p>
               </section>
             </>
           )}
 
+          {page === "release" && allowed("operations") && <EnterprisePanel mode="operations" roles={me.roles} />}
+          {page === "knowledge" && allowed("knowledge", "knowledge_reviewer") && <EnterprisePanel mode="knowledge" roles={me.roles} />}
           {page === "inventory" && (
             <section className="panel">
               <div className="panel-heading">
@@ -1735,6 +1764,18 @@ export default function Workspace() {
                       </button>
                     </section>
                   )}
+                  {!!detail.shipments?.length && <section className="detail-section"><h3>包裹履约</h3>
+                    {detail.shipments.map(shipment => <div className="record-card" key={shipment.id}>
+                      <strong>{text(shipment.package_id)}</strong><p>{text(shipment.quantity)} 件 · {statusNames[text(shipment.status)] || text(shipment.status)}</p>
+                    </div>)}
+                  </section>}
+                  {!!detail.notifications.length && <section className="detail-section"><h3>通知记录</h3>
+                    {detail.notifications.map(notice => <div className="record-card" key={notice.id}>
+                      <Badge status={text(notice.status)} /><p>{text(notice.body)}</p>
+                      {allowed("agent", "executor") && ["unknown", "submitting"].includes(text(notice.status)) &&
+                        <button className="secondary" disabled={busy} onClick={() => act(`/notifications/${notice.id}/reconcile`, {})}>核查原通知</button>}
+                    </div>)}
+                  </section>}
                   <div className="action-row closure-actions">
                     {allowed("customer") && (
                       <button
@@ -1910,6 +1951,8 @@ export default function Workspace() {
                           模型调用 {text(run.calls)} 次 · 未知用量{" "}
                           {run.unknown_usage ? "是" : "否"}
                         </small>
+                        {allowed("agent", "operations") && ["queued", "running", "waiting"].includes(text(run.status)) &&
+                          <button className="secondary" disabled={busy} onClick={() => act(`/runs/${run.id}/cancel`, {reason:"客服停止自动分析并人工接管"})}>停止分析并接管</button>}
                         {run.error ? (
                           <p className="error">{text(run.error)}</p>
                         ) : null}

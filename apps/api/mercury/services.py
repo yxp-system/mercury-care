@@ -28,6 +28,7 @@ from mercury.models import (
     Policy,
     ProviderRequest,
     Run,
+    Shipment,
     StockLedger,
     now,
     uid,
@@ -245,6 +246,8 @@ def embed(settings, text):
 
 
 def search_policies(db, ctx, case_id, query=""):
+    from mercury.knowledge import can_read
+
     with db.session(ctx) as s:
         case = get_case(s, ctx, case_id)
         order = owned(s, Order, ctx, case.order_id)
@@ -261,6 +264,7 @@ def search_policies(db, ctx, case_id, query=""):
                 )
             ).all()
         )
+        candidates = [policy for policy in candidates if can_read(policy, ctx)]
         terms = set(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", (query or case.subject).lower()))
         lexical = sorted(candidates, key=lambda p: sum(t in p.body.lower() for t in terms), reverse=True)
         mode = "keyword"
@@ -713,6 +717,8 @@ def apply_event(db, ctx, action_id, payload):
             "address": {"accepted": {"succeeded", "failed"}},
         }
         flow = allowed["replacement" if action.kind in REPLACEMENTS else action.kind]
+        if action.kind in REPLACEMENTS:
+            flow = flow | {"partially_shipped": {"shipped", "delivered"}, "shipped": {"delivered"}}
         require(
             payload.kind in flow.get(action.status, set()), "invalid_transition", "事件与当前动作状态不匹配"
         )
@@ -721,23 +727,73 @@ def apply_event(db, ctx, action_id, payload):
             "event_out_of_order",
             "事件序号不连续，需补查缺失记录",
         )
+        resulting_status = payload.kind
+        shipment_quantity = action.quantity
+        shipment_key = payload.package_id or action.id
+        if action.kind in REPLACEMENTS and payload.kind in {"shipped", "delivered"}:
+            shipments = list(
+                s.scalars(select(Shipment).where(*scoped(Shipment, ctx), Shipment.action_id == action.id))
+            )
+            existing_package = next((row for row in shipments if row.package_id == shipment_key), None)
+            shipped_quantity = sum(row.quantity for row in shipments)
+            if payload.kind == "shipped":
+                require(existing_package is None, "package_duplicate", "此包裹已记录出库")
+                shipment_quantity = payload.quantity or action.quantity
+                require(
+                    shipped_quantity + shipment_quantity <= action.quantity,
+                    "quantity_invalid",
+                    "出库数量超过授权数量",
+                )
+                package = Shipment(
+                    **scope_values(ctx),
+                    action_id=action.id,
+                    package_id=shipment_key,
+                    quantity=shipment_quantity,
+                    evidence=payload.evidence,
+                )
+                s.add(package)
+                resulting_status = (
+                    "shipped"
+                    if shipped_quantity + shipment_quantity == action.quantity
+                    else "partially_shipped"
+                )
+            else:
+                require(
+                    existing_package and existing_package.status == "shipped",
+                    "package_unconfirmed",
+                    "缺少该包裹的出库记录",
+                )
+                require(
+                    payload.quantity is None or payload.quantity == existing_package.quantity,
+                    "quantity_invalid",
+                    "送达数量与该包裹不一致",
+                )
+                existing_package.status, existing_package.delivered_at = "delivered", now()
+                delivered_quantity = sum(row.quantity for row in shipments if row.status == "delivered")
+                resulting_status = (
+                    "delivered"
+                    if delivered_quantity == action.quantity
+                    else ("shipped" if shipped_quantity == action.quantity else "partially_shipped")
+                )
         if action.kind in REPLACEMENTS and payload.kind in {"shipped", "cancelled", "failed"}:
             stock = s.scalar(
                 select(Inventory).where(*scoped(Inventory, ctx), Inventory.sku == line.sku).with_for_update()
             )
-            require(stock and stock.reserved >= action.quantity, "stock_conflict", "预留台账不一致")
-            stock.reserved -= action.quantity
+            require(stock and stock.reserved >= shipment_quantity, "stock_conflict", "预留台账不一致")
+            stock.reserved -= shipment_quantity
             if payload.kind == "shipped":
-                stock.on_hand -= action.quantity
-                stock.shipped += action.quantity
+                stock.on_hand -= shipment_quantity
+                stock.shipped += shipment_quantity
             stock.version += 1
             s.add(
                 StockLedger(
                     **scope_values(ctx),
                     action_id=action.id,
                     sku=line.sku,
-                    kind="ship" if payload.kind == "shipped" else "release",
-                    quantity=action.quantity,
+                    kind=("ship:" + digest(shipment_key)[:12] if payload.package_id else "ship")
+                    if payload.kind == "shipped"
+                    else "release",
+                    quantity=shipment_quantity,
                 )
             )
         if action.kind == "refund" and payload.kind in {"succeeded", "failed"}:
@@ -754,7 +810,7 @@ def apply_event(db, ctx, action_id, payload):
                 order.status = "cancelled"
             else:
                 order.address = owned(s, Plan, ctx, action.plan_id).address
-        action.status = payload.kind
+        action.status = resulting_status
         action.last_sequence = payload.sequence
         action.updated_at = now()
         action.receipt = action.receipt | {"last_event": payload.model_dump()}
@@ -769,7 +825,7 @@ def apply_event(db, ctx, action_id, payload):
                 digest=event_hash,
             )
         )
-        if payload.kind in TERMINAL:
+        if resulting_status in TERMINAL:
             case.status = (
                 "needs_review"
                 if payload.kind in {"failed", "cancelled", "inspected", "investigated"}
@@ -837,6 +893,7 @@ def policy_publish(db, ctx, policy_id, payload, *, withdraw=False):
     ctx.require_role("knowledge_reviewer")
     with db.session(ctx, write=True) as s:
         policy = owned(s, Policy, ctx, policy_id, True)
+        require(not policy.document_id, "document_publication_required", "文档条款须随完整文档统一发布或撤回")
         require(policy.author_id != ctx.user_id, "separation_of_duties", "规则须由另一位审核人发布", 403)
         if withdraw:
             policy.status = "withdrawn"
@@ -877,6 +934,7 @@ def notify_customer(db, ctx, case_id, payload):
                 recipient_id=case.customer_id,
                 body=body,
                 intent_hash=key,
+                case_version=case.version,
             )
             s.add(notification)
             enqueue(s, ctx, "notification", notification.id, "notify:" + key)

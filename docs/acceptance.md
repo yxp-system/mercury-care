@@ -42,3 +42,11 @@ GitHub CI（提交 `289cf741231422315457017db8a7064d53f080d5`）已实际通过�
 ![工作台](screenshots/workspace.jpg)
 
 [结案与当前通知截图](screenshots/closed-case.jpg) · [手机布局截图](screenshots/mobile.jpg)
+
+## v0.2 升级验证
+
+本地完整回归 **52 passed, 1 skipped**，279.12 秒；随后新增的实时订阅范围、即时撤权与旧 worker fence 测试，以及知识导入、分批履约、完整五角色回归，共 **5 passed**，17.04 秒。原 PostgreSQL 专用 RLS 项仍由 CI 执行。本地 `pip-audit==2.9.0 --skip-editable` 报告 **No known vulnerabilities found**；项目自身为 editable，由代码检查与测试验证。
+
+前端生产构建与 TypeScript 检查通过。升级前停止了本机 API/worker，写入 `.data/before-enterprise-upgrade` 并完成 SHA256、SQLite integrity_check 和 foreign_key_check；备份含 16 工单、1 方案、1 审批、1 动作、5 任务。迁移 `238f42efcd92` 在原数据库上成功运行，Alembic check 无待生成结构变更。
+
+新增测试覆盖 OIDC 浏览器绑定、PKCE、nonce、回调重放、加密刷新与登出；共享限流；取消后不再消耗预算；SLA 去重交接；ClamAV TCP 流式协议、隔离与内容篡改；文档 ACL、独立审核与版本切换；两个包裹先后出库/送达与库存守恒；通知回执丢失及队列中状态过期。身份提供方、扫描引擎、业务提供方均按明确测试契约验证，未声称真实企业联调。
