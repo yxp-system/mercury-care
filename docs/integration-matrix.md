@@ -8,7 +8,7 @@
 | 企业身份 | OIDC RS256 验签适配 | ISSUER、AUDIENCE、固定 JWKS；主体需预先登记成员 | 未提供企业 IdP；未真实联调；浏览器 OIDC 登录跳转待实现 |
 | 聊天模型 | OpenAI-compatible 结构输出 HTTPS 网关 | LLM_BASE_URL、LLM_MODEL、LLM_API_KEY；不得静默降级 | 默认 deterministic_test；真实模型调用和质量未验证 |
 | 嵌入 | HTTP embeddings，维度/数值校验 | EMBEDDING_MODEL；固定1536维，记录模型名 | 未提供真实嵌入；关键词检索已运行；真实混合召回待验 |
-| PostgreSQL / pgvector | SQLAlchemy / Alembic / RLS / PostgresSaver | DATABASE_URL；迁移 owner 与受限 app 账号 | 本机无实例；远程 CI 验证记录见 acceptance |
+| PostgreSQL / pgvector | SQLAlchemy / Alembic / RLS / PostgresSaver | DATABASE_URL；迁移 owner 与受限 app 账号 | GitHub CI真实PostgreSQL/pgvector 42项通过，迁移往返通过；生产实例未部署 |
 | SQLite | 明确单机 demo/test | 独立 `.data/`；WAL / FK / BEGIN IMMEDIATE | 本地真实数据库测试和跨进程恢复 |
 | OMS | 本地合成订单与订单行 | 需要官方对象、分页、身份、归属与新鲜度契约 | 未接入；external 读取返回503 |
 | WMS | 本地事务预留/出库/释放 | 需要原子预留、远程预留ID、期限、查询/释放接口 | 合成库存守恒与并发验证；无全渠道保证 |

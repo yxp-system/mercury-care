@@ -25,3 +25,8 @@ uv run pytest -q --tb=short --junitxml=.data/local-tests.xml
 隔离 SQLite 备份已执行，SHA256、integrity_check、foreign_key_check 均通过，16个合成工单完整。独立 API 与 worker 默认配置启动成功，主案例运行到 waiting，记录9次模型角色调用。
 
 后续前端构建、浏览器和远程 CI 验证结果会追加于本文件。当前不填未经运行的真实模型效果、生产吞吐、企业收益或上线签署。
+
+
+GitHub CI（提交 `289cf741231422315457017db8a7064d53f080d5`）已实际通过：[运行记录](https://github.com/yxp-system/mercury-care/actions/runs/45176404118)。Ubuntu 上 SQLite **41 passed, 1 skipped**，PostgreSQL/pgvector **42 passed**，包括非 owner 的 RLS 和独立进程恢复；Alembic upgrade → downgrade → upgrade 成功。前端 build、typecheck、npm audit 高危门禁与 API/web Docker 镜像构建全部成功。
+
+本地生产前端构建与 TypeScript 检查通过。浏览器发现并修复了 localhost / 127.0.0.1 同源处理及切换账号的旧界面状态残留；同源登录200、跨源写入403。小林账号仅能看到自身一个工单，已实际从页面确认方案，再以 manager 账号批准；角色调用及审计记录可读取。

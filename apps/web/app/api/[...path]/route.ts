@@ -16,13 +16,18 @@ async function proxy(
   const mutating = !["GET", "HEAD"].includes(request.method);
   if (mutating) {
     const origin = request.headers.get("origin");
+    const localHost = request.headers.get("host");
     const expectedOrigin =
-      process.env.MERCURY_PUBLIC_ORIGIN || request.nextUrl.origin;
-    if (origin !== expectedOrigin)
+      process.env.MERCURY_PUBLIC_ORIGIN ||
+      (["localhost:3040", "127.0.0.1:3040"].includes(localHost || "")
+        ? `http://${localHost}`
+        : request.nextUrl.origin);
+    if (origin !== expectedOrigin) {
       return NextResponse.json(
         { error: { message: "请求来源校验失败" } },
         { status: 403 },
       );
+    }
     const length = Number(request.headers.get("content-length") || 0);
     if (length > 6 * 1024 * 1024)
       return NextResponse.json(

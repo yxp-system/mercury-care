@@ -239,6 +239,7 @@ export default function Workspace() {
     setCases(list);
     setCaps(currentCaps);
     if (!me?.customer_id) setStats(await api<Stats>("/operations"));
+    else setStats(null);
   }, [me?.customer_id]);
   useEffect(() => {
     api<Me>("/me")
@@ -329,6 +330,12 @@ export default function Workspace() {
         tenant_id: username === "outsider" ? "other" : "northstar",
         store_id: username === "outsider" ? "de" : "uk",
       });
+      setStats(null);
+      setCases([]);
+      setItems([]);
+      setClaims([]);
+      setCaps(null);
+      setPage("overview");
       setMe(await api<Me>("/me"));
       setPassword("");
     } catch (e) {
@@ -602,6 +609,8 @@ export default function Workspace() {
             .map((n) => (
               <button
                 key={n.id}
+                aria-label={n.label}
+                title={n.label}
                 className={page === n.id ? "nav-item active" : "nav-item"}
                 onClick={() => {
                   setPage(n.id);
@@ -643,6 +652,15 @@ export default function Workspace() {
               await api("/auth/logout", {});
               setMe(null);
               setDetail(null);
+              setStats(null);
+              setCases([]);
+              setItems([]);
+              setClaims([]);
+              setRules([]);
+              setFacts(null);
+              setCaps(null);
+              setOrders([]);
+              setPage("overview");
             }}
           >
             <span className="avatar">{me.name.slice(0, 1)}</span>
@@ -661,7 +679,12 @@ export default function Workspace() {
             <strong>{title}</strong>
           </div>
           <div className="top-actions">
-            <span className="environment-dot" /> <span>{caps?.business === "synthetic" ? "合成数据演示" : "企业接入待验证"}</span>
+            <span className="environment-dot" />{" "}
+            <span>
+              {caps?.business === "synthetic"
+                ? "合成数据演示"
+                : "企业接入待验证"}
+            </span>
             <span className="top-divider" />
             <button aria-label="帮助" onClick={() => setPage("jobs")}>
               <CircleHelp size={19} />
