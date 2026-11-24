@@ -636,7 +636,7 @@ export default function Workspace() {
         <nav>
           {navigation
             .filter(
-              (n) => (!me.customer_id || ["overview", "cases"].includes(n.id)) && (n.id !== "release" || allowed("operations")),
+              (n) => (!me.customer_id || ["overview", "cases"].includes(n.id)) && (n.id !== "release" || allowed("operations", "release_reviewer")),
             )
             .map((n) => (
               <button
@@ -1139,7 +1139,7 @@ export default function Workspace() {
             </>
           )}
 
-          {page === "release" && allowed("operations") && <EnterprisePanel mode="operations" roles={me.roles} />}
+          {page === "release" && allowed("operations", "release_reviewer") && <EnterprisePanel mode="operations" roles={me.roles} />}
           {page === "knowledge" && allowed("knowledge", "knowledge_reviewer") && <EnterprisePanel mode="knowledge" roles={me.roles}
             onUpdated={async () => {setItems(await api<Item[]>("/policies"));}} />}
           {page === "inventory" && (

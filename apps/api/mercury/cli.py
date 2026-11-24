@@ -5,6 +5,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
+from mercury.auth import AuthContext
 from mercury.config import Settings
 from mercury.db import Database
 from mercury.seed import seed
@@ -14,6 +15,8 @@ from mercury.workflow import checkpointer
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["configure", "migrate", "seed", "check", "release-check"])
+    parser.add_argument("--tenant-id", default="")
+    parser.add_argument("--store-id", default="")
     args = parser.parse_args()
     if args.command == "configure":
         path = Path(".env")
@@ -35,7 +38,18 @@ def main():
 
         from mercury.readiness import report
 
-        result = report(db)
+        if bool(args.tenant_id) != bool(args.store_id):
+            parser.error("--tenant-id and --store-id must be provided together")
+        if settings.env in {"staging", "production"} and not args.tenant_id:
+            parser.error(
+                "staging/production release checks require --tenant-id and --store-id for row-level scope"
+            )
+        ctx = (
+            AuthContext("release-check", args.tenant_id, args.store_id, frozenset({"operations"}))
+            if args.tenant_id
+            else None
+        )
+        result = report(db, ctx)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         raise SystemExit(0 if result["release_ready"] else 2)
     if args.command == "migrate":

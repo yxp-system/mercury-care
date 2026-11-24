@@ -98,6 +98,22 @@ class ReasonInput(StrictModel):
     reason: str = Field(min_length=3, max_length=2000)
 
 
+class ReleaseEvidenceInput(StrictModel):
+    check_name: str = Field(min_length=3, max_length=80)
+    environment: str = Field(pattern="^(staging|production)$")
+    provider: str = Field(min_length=2, max_length=160)
+    owner_id: str = Field(min_length=2, max_length=80)
+    evidence_ref: str = Field(min_length=3, max_length=300)
+    summary: str = Field(min_length=10, max_length=2000)
+    tested_at: float
+    expires_at: float
+
+
+class ReleaseReviewInput(StrictModel):
+    decision: str = Field(pattern="^(accepted|rejected)$")
+    note: str = Field(min_length=10, max_length=2000)
+
+
 class PolicyInput(StrictModel):
     family: str = Field(min_length=3, max_length=80)
     title: str = Field(min_length=3, max_length=200)

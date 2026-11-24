@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     approval_ttl: int = 86400
     access_token_minutes: int = 30
     improvement_min_samples: int = 30
+    privacy_retention_days: int = 0
+    audit_retention_days: int = 0
+    privacy_policy_ref: str = ""
+    security_contact: str = ""
+    model_eval_min_cases: int = 30
     overdue_hours: int = 24
     require_separation_of_duties: bool = True
 
@@ -86,6 +91,7 @@ class Settings(BaseSettings):
                 self.run_timeout_seconds,
                 self.waiting_timeout_hours,
                 self.login_attempts_per_minute,
+                self.model_eval_min_cases,
             )
             <= 0
         ):
@@ -106,4 +112,13 @@ class Settings(BaseSettings):
                 raise ValueError("Wildcard CORS is forbidden")
             if not self.require_separation_of_duties:
                 raise ValueError("Staging/production require separate approval and execution identities")
+            if (
+                self.privacy_retention_days <= 0
+                or self.audit_retention_days < self.privacy_retention_days
+                or not self.privacy_policy_ref
+                or not self.security_contact
+            ):
+                raise ValueError(
+                    "Staging/production require documented retention periods and a named security contact"
+                )
         return self

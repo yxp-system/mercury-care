@@ -13,7 +13,18 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.asymmetric import rsa
 from mercury.attachments import scan_attachment
 from mercury.errors import DomainError
-from mercury.models import BrowserSession, Case, Job, Notification, OrderLine, Policy, Run
+from mercury.models import (
+    BrowserSession,
+    Case,
+    Inventory,
+    Job,
+    Notification,
+    OrderLine,
+    Policy,
+    ReleaseEvidence,
+    Run,
+    Shipment,
+)
 from mercury.notifications import dispatch_notification
 from mercury.runtime import schedule_escalations
 from mercury.sessions import begin_login, finish_login, hashed, rate_limit, resolve_session, revoke_session
@@ -390,3 +401,193 @@ def test_partial_shipments_preserve_stock_and_require_all_deliveries(client, db,
     )
     assert (stock["on_hand"], stock["reserved"], stock["shipped"]) == (1, 0, 2)
     assert len(client.get(f"/api/cases/{MAIN}", headers=headers()).json()["shipments"]) == 2
+
+
+def test_cancel_remaining_quantity_after_partial_shipment_keeps_stock_and_entitlement_balanced(
+    client, db, headers
+):
+    with db.session(CTX, write=True) as session:
+        case = session.get(Case, MAIN)
+        line = session.get(OrderLine, case.line_id)
+        line.quantity, line.total_minor = 4, 10000
+        session.scalar(
+            select(Inventory).where(Inventory.tenant_id == "northstar", Inventory.sku == "CUP-WHITE")
+        ).on_hand = 5
+    case = client.get(f"/api/cases/{MAIN}", headers=headers()).json()
+    rules = client.get(f"/api/cases/{MAIN}/rules", headers=headers()).json()
+    plan = client.post(
+        f"/api/cases/{MAIN}/plans",
+        headers=headers(),
+        json={
+            "version": case["version"],
+            "kind": "replacement",
+            "quantity": 4,
+            "rationale": "分批出库后仅取消没有出库的剩余数量",
+            "citations": [row["id"] for row in rules["citations"]],
+        },
+    ).json()
+    authorize(client, headers, db, plan)
+    action = execute(client, headers, plan).json()
+    drain(db)
+
+    def event_call(sequence, kind, package, quantity=1, source_id=None):
+        return client.post(
+            f"/api/demo/actions/{action['id']}/events",
+            headers=headers("executor"),
+            json={
+                "source_id": source_id or f"partial-cancel-{sequence}",
+                "sequence": sequence,
+                "kind": kind,
+                "package_id": package,
+                "quantity": quantity,
+                "evidence": "本地隔离的可核对合成事件",
+            },
+        )
+
+    first = event_call(1, "shipped", "sent-package")
+    assert first.json()["status"] == "partially_shipped"
+    cancellation = event_call(2, "cancelled", "", 1)
+    assert cancellation.status_code == 200, cancellation.text
+    assert cancellation.json()["status"] == "partially_cancelled"
+    assert event_call(2, "cancelled", "", 1).json() == cancellation.json()
+    second_shipment = event_call(3, "shipped", "second-package")
+    assert second_shipment.status_code == 200, second_shipment.text
+    assert second_shipment.json()["status"] == "partially_cancelled"
+    second_cancellation = event_call(4, "cancelled", "", 1)
+    assert second_cancellation.status_code == 200, second_cancellation.text
+    assert second_cancellation.json()["status"] == "partially_cancelled"
+    overship = event_call(5, "shipped", "over-authorized-package")
+    assert overship.status_code == 409
+    with db.session(CTX) as session:
+        stock = session.scalar(
+            select(Inventory).where(Inventory.tenant_id == "northstar", Inventory.sku == "CUP-WHITE")
+        )
+        line = session.get(OrderLine, MAIN.removeprefix("CASE-") + "-1")
+        cancelled_shipments = list(
+            session.scalars(
+                select(Shipment).where(Shipment.action_id == action["id"], Shipment.status == "cancelled")
+            )
+        )
+        assert len(cancelled_shipments) == 2 and all(row.quantity == 1 for row in cancelled_shipments)
+        assert (stock.on_hand, stock.reserved, stock.shipped) == (3, 0, 2)
+        assert line.remedy_minor == 5000
+
+    first_delivery = event_call(5, "delivered", "sent-package")
+    assert first_delivery.status_code == 200, first_delivery.text
+    second_delivery = event_call(6, "delivered", "second-package")
+    assert second_delivery.status_code == 200, second_delivery.text
+    assert second_delivery.json()["status"] == "delivered"
+    with db.session(CTX) as session:
+        stock = session.scalar(
+            select(Inventory).where(Inventory.tenant_id == "northstar", Inventory.sku == "CUP-WHITE")
+        )
+        line = session.get(OrderLine, MAIN.removeprefix("CASE-") + "-1")
+        assert (stock.on_hand, stock.reserved, stock.shipped) == (3, 0, 2)
+        assert line.remedy_minor == 5000
+    detail = client.get(f"/api/cases/{MAIN}", headers=headers()).json()
+    assert (
+        client.post(
+            f"/api/cases/{MAIN}/close",
+            headers=headers(),
+            json={"version": detail["version"], "reason": "不允许缺少客户解决确认"},
+        ).status_code
+        == 409
+    )
+
+
+def test_release_evidence_has_independent_review_expiry_and_cannot_enable_missing_adapter(
+    client, db, headers, monkeypatch
+):
+    stamp = time.time()
+    payload = {
+        "check_name": "integration_OMS",
+        "environment": "staging",
+        "provider": "Synthetic Partner Sandbox",
+        "owner_id": "agent",
+        "evidence_ref": "sandbox-run:OMS-2026-11-24-17",
+        "summary": "Contract tests and provider-side idempotency query were recorded.",
+        "tested_at": stamp - 60,
+        "expires_at": stamp + 86400,
+    }
+    submitted = client.post("/api/release-readiness/evidence", headers=headers("ops"), json=payload)
+    assert submitted.status_code == 201, submitted.text
+    identity = submitted.json()["id"]
+    self_review = client.post(
+        f"/api/release-readiness/evidence/{identity}/review",
+        headers=headers("ops"),
+        json={"decision": "accepted", "note": "Reviewed without independence."},
+    )
+    assert self_review.status_code == 403
+    approved = client.post(
+        f"/api/release-readiness/evidence/{identity}/review",
+        headers=headers("release-reviewer"),
+        json={"decision": "accepted", "note": "Verified the staging contract report and owner."},
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["reviewer_id"] == "release-reviewer"
+    assert (
+        client.post(
+            f"/api/release-readiness/evidence/{identity}/review",
+            headers=headers("release-reviewer"),
+            json={"decision": "rejected", "note": "An immutable decision cannot be overwritten."},
+        ).status_code
+        == 409
+    )
+    ops_headers = headers("ops")
+    monkeypatch.setattr(db.settings, "env", "staging")
+    readiness = client.get("/api/release-readiness", headers=ops_headers).json()
+    check = next(item for item in readiness["checks"] if item["name"] == "integration_OMS")
+    assert check["evidence_status"] == "accepted"
+    assert check["passed"] is False and check["configured"] is False
+
+
+def test_release_evidence_is_store_scoped_and_data_governance_is_unconfigured(
+    client, db, headers, monkeypatch
+):
+    stamp = time.time()
+    with db.session(write=True) as session:
+        session.add(
+            ReleaseEvidence(
+                tenant_id="other",
+                store_id="de",
+                check_name="data_governance",
+                environment="staging",
+                provider="Foreign synthetic policy",
+                owner_id="outsider",
+                evidence_ref="other-store-policy-1",
+                summary="This approved evidence belongs to a different tenant and store.",
+                tested_at=stamp - 60,
+                expires_at=stamp + 86400,
+                submitted_by="outsider",
+                status="accepted",
+                reviewer_id="outsider",
+                review_note="Approved in the other store.",
+                reviewed_at=stamp - 30,
+            )
+        )
+    denied = client.post(
+        "/api/release-readiness/evidence",
+        headers=headers("outsider"),
+        json={
+            "check_name": "data_governance",
+            "environment": "staging",
+            "provider": "Test policy",
+            "owner_id": "agent",
+            "evidence_ref": "test-policy-1",
+            "summary": "An isolated synthetic policy evidence record.",
+            "tested_at": time.time() - 30,
+            "expires_at": time.time() + 86400,
+        },
+    )
+    assert denied.status_code == 403
+    reviewer_headers = headers("release-reviewer")
+    monkeypatch.setattr(db.settings, "env", "staging")
+    records = client.get("/api/release-readiness/evidence", headers=reviewer_headers)
+    assert records.status_code == 200, records.text
+    assert records.json() == []
+    readiness = client.get("/api/release-readiness", headers=reviewer_headers)
+    assert readiness.status_code == 200, readiness.text
+    governance = next(item for item in readiness.json()["checks"] if item["name"] == "data_governance")
+    assert governance["configured"] is False
+    assert governance["passed"] is False
+    assert governance["evidence_status"] == "missing"

@@ -234,10 +234,28 @@ def create_app(settings=None):
 
     @app.get("/api/release-readiness")
     def release_readiness(ctx: Identity):
-        ctx.require_role("operations")
+        ctx.require_role("operations", "release_reviewer")
         from mercury.readiness import report
 
-        return report(db)
+        return report(db, ctx)
+
+    @app.get("/api/release-readiness/evidence")
+    def release_evidence(ctx: Identity):
+        from mercury.release_evidence import list_evidence
+
+        return list_evidence(db, ctx)
+
+    @app.post("/api/release-readiness/evidence", status_code=201)
+    def submit_release_evidence(payload: p.ReleaseEvidenceInput, ctx: Identity):
+        from mercury.release_evidence import submit_evidence
+
+        return submit_evidence(db, ctx, payload)
+
+    @app.post("/api/release-readiness/evidence/{evidence_id}/review")
+    def review_release_evidence(evidence_id: str, payload: p.ReleaseReviewInput, ctx: Identity):
+        from mercury.release_evidence import review_evidence
+
+        return review_evidence(db, ctx, evidence_id, payload)
 
     @app.get("/api/orders")
     def orders(ctx: Identity):

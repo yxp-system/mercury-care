@@ -17,6 +17,7 @@
 | knowledge_documents | 文档族、版本、正文、ACL、作者/独立审核人与后台索引；章节随整份文档统一发布 |
 | browser_sessions / login_transactions | 会话句柄哈希、加密刷新令牌、到期与撤销；一次性 OIDC 事务 |
 | escalations | 运行超时去重、原因、接管人和接管时间 |
+| release_evidence | 店铺/环境/检查项、责任人、受控凭据引用、测试与失效时间、提交和独立审核；结论追加后不可覆盖 |
 | notifications | 固定接收客户、内容意图哈希、稳定发送关联、合成回执 |
 | claims / improvements / audit | 责任主体、证据、版本、复查/结算依据与追加审计 |
 
@@ -37,6 +38,7 @@
 - `/api/knowledge/documents`、文档下 `/publish|withdraw`：后台导入、整份文档的版本发布和撤回；章节不能单独发布。
 - `/api/events`：重新鉴权并按客户范围筛选的实时刷新提示。
 - `/api/runs/{id}/cancel`、`/api/escalations`、`/api/release-readiness`：取消分析、超时交接和实际上线缺项。
+- `/api/release-readiness/evidence` 与记录下的 `/review`：运营岗位提交、`release_reviewer` 独立审核有失效期的上线验收依据；门禁按当前店铺与环境读取，证据不会替代缺失的真实能力。
 - `/api/operations`、`/api/inventory`、`/api/improvements`、`/api/claims`、`/api/jobs`：经营与运行。
 
 写入 JSON 示例请在 API 文档查看当前 Schema；不需要手工猜字段。Cookie 代理把 token 留在服务端同源路由，客户端不使用 localStorage 存令牌。

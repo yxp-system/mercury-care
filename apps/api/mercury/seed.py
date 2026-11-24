@@ -14,6 +14,7 @@ ACCOUNTS = {
     "ops": ("苏宁 · 运营", ["operations"]),
     "editor": ("知识编辑", ["knowledge"]),
     "reviewer": ("知识审核", ["knowledge_reviewer"]),
+    "release-reviewer": ("上线验收审核", ["release_reviewer"]),
     "outsider": ("另一租户", ["agent"]),
 }
 

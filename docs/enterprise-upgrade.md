@@ -13,9 +13,12 @@
 | 附件隔离 | ClamAV INSTREAM；超时或未知响应保留隔离；下载重新核对 SHA256；感染文件不能通过演示例外下载 | attachments.py |
 | 知识导入 | Markdown/纯文本持久导入队列、章节分块、可选真实嵌入、人员/岗位 ACL、审核分离、完整索引原子发布和旧版本撤回 | knowledge.py |
 | 分批履约 | 包裹关联动作、分包数量、逐包出库/送达、累计数量上限、重复事件防重；全部包裹送达后才进入解决确认 | Shipment / apply_event |
+| 分批撤销 | 已部分出库的补发动作可取消剩余未出库数量；每次取消释放对应预留并按累计取消数量结转权益，后续出库继续校验总授权数 | `test_cancel_remaining_quantity_after_partial_shipment_keeps_stock_and_entitlement_balanced` |
 | 通知恢复 | 保存发送意图与稳定原请求、投递前复核工单版本、未知结果仅核查原请求、独立记录尝试和回执 | notifications.py |
 | 工作台 | 企业登录入口、知识导入与审核表单、停止分析、包裹与通知记录、交接与上线门禁、鉴权 SSE 刷新 | Next.js 工作台 |
 | 交付运维 | 显式 release-check、受限容器覆盖配置、Prometheus 队列/未知动作指标、告警样例、隔离 PostgreSQL 备份恢复脚本 | CLI / deploy / scripts |
+| 上线证据 | 店铺与目标环境范围内提交证据，指定有效成员、受控凭据引用、测试/失效期；由独立岗位审核且决定不可覆盖。缺失适配器或未批准配置仍阻断 readiness | `release_evidence.py` / readiness API |
+| 数据与模型门禁 | staging/production 要求明确数据保留配置、政策编号与事故负责人；评分器要求去标识样本并报告聚合质量和输入哈希 | `privacy-retention-policy.md` / `scripts/evaluate_quality.py` |
 
 所有通知和履约用例仍为显式 synthetic。OIDC 测试使用本地生成 RSA 密钥和模拟 token endpoint；ClamAV 测试使用本地 TCP 协议服务。它们验证实现和失败边界，不代表企业 IdP 或已部署杀毒服务的联调证明。
 
@@ -38,12 +41,12 @@
 uv run python scripts/postgres_recovery.py backup .data/backup-001 --workers-stopped
 # 指向新建的隔离 *_restore_* 数据库与新的 DATA_DIR 后运行
 uv run python scripts/postgres_recovery.py restore .data/backup-001 --workers-stopped
-uv run python -m mercury.cli release-check
+uv run python -m mercury.cli release-check --tenant-id "your-tenant" --store-id "your-store"
 ```
 
-release-check 返回非零退出码表示上线条件仍有缺项。当前 OMS/WMS、支付、物流和真实通知没有选定供应商，门禁明确阻塞；不能用修改门禁或切换环境名代替接入。
+release-check 返回非零退出码表示上线条件仍有缺项。staging/production 必须提供租户和店铺范围，以便在 PostgreSQL 行级安全上下文中读取独立审核凭据；本地 demo/test 可省略。当前 OMS/WMS、支付、物流和真实通知没有选定供应商，门禁明确阻塞；不能用修改门禁或切换环境名代替接入。
 
-CI 中 `scripts/recovery_drill.py` 仅允许显式 test 环境和包含 test 的数据库名。prepare 通过应用 API 建立客户选择、独立批准和原请求，再注入合成丢回执、附件和一次性会话；verify 检查恢复后的原请求、库存占用、附件哈希、会话撤销、登录事务清理和禁止派发。测试记录与生产外部动作窗口的验证分开，实际执行结果见 [验收记录](acceptance.md)。
+CI 中 `scripts/recovery_drill.py` 仅允许显式 test 环境和包含 test 的数据库名。prepare 通过应用 API 建立客户选择、独立批准和原请求，再注入合成丢回执、附件和一次性会话；verify 检查恢复后的原请求、库存占用、附件哈希、会话撤销、登录事务清理和禁止派发。质量评分器可通过 `--min-cases`、事实召回、引用落地率和安全标签召回阈值拒绝报告；CI 用单条合成样例仅验证程序，不代表模型通过。测试记录与生产外部动作窗口的验证分开，实际执行结果见 [验收记录](acceptance.md)。
 
 ## 待选型后完成
 

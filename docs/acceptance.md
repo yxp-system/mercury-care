@@ -64,3 +64,11 @@ v0.2 提交 `e7604964d78d80eac06b9b00c09fe4e2e456c25d` 的 [CI](https://github.c
 ![交接与上线条件](screenshots/release-v02.jpg)
 
 [手机运维页面](screenshots/release-mobile-v02.jpg)
+
+## 2026-11-24 企业门禁与部分撤销跟进
+
+本地 Windows 环境（Python 3.12.9、Node.js 24.18.0）完整回归 **61 passed, 1 skipped**（105.66 秒）；跳过项仍为需要 PostgreSQL 的独立 RLS 条件。Ruff 检查和格式检查通过，`uv run alembic check` 报告无未生成结构变更。Next.js 生产构建和 TypeScript 检查通过。
+
+新增回归验证多包裹场景下的重复/连续撤销、撤销后继续出库、超授权拒绝、逐包送达、库存预留释放及按累计数量结转权益；上线凭据测试验证审核独立性、不可覆盖、能力缺失时仍阻塞、审核员只能看到本店证据并能读取 readiness。评分器通过合成冒烟样例和结构/去重/缺少必需安全标签/必需规则引用的单元测试；这只验证评分程序，不构成真实模型评测。
+
+新增迁移 `a71c038f09d2` 为上线证据表增加租户/店铺隔离。staging/production 的 CLI 检查现在要求显式提供租户和店铺，沿用相同的 PostgreSQL RLS 范围。供应商、企业身份提供方和目标部署环境仍未选择；生产数据删除作业和经批准的法律保留策略尚未实现，`release_ready` 不能据此标为通过。

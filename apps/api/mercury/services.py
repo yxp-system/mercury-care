@@ -34,7 +34,14 @@ from mercury.models import (
     uid,
 )
 
-TERMINAL = {"delivered", "succeeded", "inspected", "investigated", "failed", "cancelled"}
+TERMINAL = {
+    "delivered",
+    "succeeded",
+    "inspected",
+    "investigated",
+    "failed",
+    "cancelled",
+}
 REPLACEMENTS = {"replacement", "missing", "wrong"}
 
 
@@ -709,7 +716,12 @@ def apply_event(db, ctx, action_id, payload):
         order = owned(s, Order, ctx, case.order_id, True)
         line = owned(s, OrderLine, ctx, case.line_id, True)
         allowed = {
-            "replacement": {"accepted": {"shipped", "failed", "cancelled"}, "shipped": {"delivered"}},
+            "replacement": {
+                "accepted": {"shipped", "failed", "cancelled"},
+                "partially_shipped": {"shipped", "delivered", "cancelled"},
+                "partially_cancelled": {"shipped", "delivered", "cancelled"},
+                "shipped": {"delivered"},
+            },
             "refund": {"accepted": {"succeeded", "failed"}},
             "return": {"accepted": {"received", "cancelled"}, "received": {"inspected"}},
             "delivery": {"accepted": {"investigated", "failed"}},
@@ -717,8 +729,6 @@ def apply_event(db, ctx, action_id, payload):
             "address": {"accepted": {"succeeded", "failed"}},
         }
         flow = allowed["replacement" if action.kind in REPLACEMENTS else action.kind]
-        if action.kind in REPLACEMENTS:
-            flow = flow | {"partially_shipped": {"shipped", "delivered"}, "shipped": {"delivered"}}
         require(
             payload.kind in flow.get(action.status, set()), "invalid_transition", "事件与当前动作状态不匹配"
         )
@@ -730,17 +740,22 @@ def apply_event(db, ctx, action_id, payload):
         resulting_status = payload.kind
         shipment_quantity = action.quantity
         shipment_key = payload.package_id or action.id
-        if action.kind in REPLACEMENTS and payload.kind in {"shipped", "delivered"}:
+        if action.kind in REPLACEMENTS and payload.kind in {"shipped", "delivered", "cancelled"}:
             shipments = list(
                 s.scalars(select(Shipment).where(*scoped(Shipment, ctx), Shipment.action_id == action.id))
             )
             existing_package = next((row for row in shipments if row.package_id == shipment_key), None)
-            shipped_quantity = sum(row.quantity for row in shipments)
+            shipped_quantity = sum(
+                row.quantity for row in shipments if row.status in {"shipped", "delivered"}
+            )
+            cancelled_quantity = sum(row.quantity for row in shipments if row.status == "cancelled")
             if payload.kind == "shipped":
                 require(existing_package is None, "package_duplicate", "此包裹已记录出库")
-                shipment_quantity = payload.quantity or action.quantity
+                shipment_quantity = (
+                    payload.quantity or action.quantity - shipped_quantity - cancelled_quantity
+                )
                 require(
-                    shipped_quantity + shipment_quantity <= action.quantity,
+                    shipped_quantity + cancelled_quantity + shipment_quantity <= action.quantity,
                     "quantity_invalid",
                     "出库数量超过授权数量",
                 )
@@ -754,10 +769,12 @@ def apply_event(db, ctx, action_id, payload):
                 s.add(package)
                 resulting_status = (
                     "shipped"
-                    if shipped_quantity + shipment_quantity == action.quantity
+                    if shipped_quantity + shipment_quantity + cancelled_quantity == action.quantity
+                    else "partially_cancelled"
+                    if cancelled_quantity
                     else "partially_shipped"
                 )
-            else:
+            elif payload.kind == "delivered":
                 require(
                     existing_package and existing_package.status == "shipped",
                     "package_unconfirmed",
@@ -769,11 +786,56 @@ def apply_event(db, ctx, action_id, payload):
                     "送达数量与该包裹不一致",
                 )
                 existing_package.status, existing_package.delivered_at = "delivered", now()
-                delivered_quantity = sum(row.quantity for row in shipments if row.status == "delivered")
+                delivered_quantity = sum(
+                    row.quantity for row in shipments if row.status == "delivered" or row is existing_package
+                )
+                delivery_target = action.quantity - cancelled_quantity
                 resulting_status = (
                     "delivered"
-                    if delivered_quantity == action.quantity
-                    else ("shipped" if shipped_quantity == action.quantity else "partially_shipped")
+                    if delivered_quantity == delivery_target
+                    else (
+                        "shipped"
+                        if shipped_quantity + cancelled_quantity == action.quantity
+                        else "partially_cancelled"
+                        if cancelled_quantity
+                        else "partially_shipped"
+                    )
+                )
+            elif payload.kind == "cancelled":
+                remaining = action.quantity - shipped_quantity - cancelled_quantity
+                require(remaining > 0, "nothing_to_cancel", "已无尚未出库的授权数量可取消")
+                shipment_quantity = payload.quantity or remaining
+                require(
+                    shipment_quantity <= remaining
+                    and (action.status != "accepted" or shipment_quantity == remaining),
+                    "quantity_invalid",
+                    "只能取消尚未出库的剩余数量；未拆包动作必须一次取消全部数量",
+                )
+                cancelled_package = "cancel-" + digest(payload.source_id)[:32]
+                s.add(
+                    Shipment(
+                        **scope_values(ctx),
+                        action_id=action.id,
+                        package_id=cancelled_package,
+                        quantity=shipment_quantity,
+                        status="cancelled",
+                        evidence=payload.evidence,
+                    )
+                )
+                next_cancelled = cancelled_quantity + shipment_quantity
+                original_entitlement = (
+                    line.total_minor * action.quantity + line.quantity - 1
+                ) // line.quantity
+                already_released = (
+                    original_entitlement * cancelled_quantity + action.quantity - 1
+                ) // action.quantity
+                released_entitlement = (
+                    original_entitlement * next_cancelled + action.quantity - 1
+                ) // action.quantity - already_released
+                line.remedy_minor -= released_entitlement
+                action.remedy_minor -= released_entitlement
+                resulting_status = (
+                    "cancelled" if shipped_quantity + next_cancelled == 0 else "partially_cancelled"
                 )
         if action.kind in REPLACEMENTS and payload.kind in {"shipped", "cancelled", "failed"}:
             stock = s.scalar(
@@ -792,7 +854,7 @@ def apply_event(db, ctx, action_id, payload):
                     sku=line.sku,
                     kind=("ship:" + digest(shipment_key)[:12] if payload.package_id else "ship")
                     if payload.kind == "shipped"
-                    else "release",
+                    else "release:" + digest(payload.source_id)[:12],
                     quantity=shipment_quantity,
                 )
             )
@@ -800,7 +862,7 @@ def apply_event(db, ctx, action_id, payload):
             order.refund_reserved_minor -= action.amount_minor
             if payload.kind == "succeeded":
                 order.refunded_minor += action.amount_minor
-        if payload.kind in {"failed", "cancelled"}:
+        if payload.kind in {"failed", "cancelled"} and resulting_status not in {"partially_cancelled"}:
             line.remedy_minor -= action.remedy_minor
         if payload.kind == "succeeded" and action.kind in {"cancellation", "address"}:
             require(

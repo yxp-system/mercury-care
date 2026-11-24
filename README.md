@@ -65,6 +65,7 @@ npm run dev
 | `executor` | 执行已批准动作、核查原请求与合成履约事件 |
 | `ops` | 经营统计、整改、内部索赔 |
 | `editor` / `reviewer` | 知识编辑 / 独立审核 |
+| `release-reviewer` | 与运营提交人分离的上线证据审核 |
 | `outsider` | 另一租户的隔离测试账号 |
 
 批准与执行必须使用不同账号。`demo` 拥有多个演示岗位，但不能用同一身份批准并执行同一个动作。
@@ -137,7 +138,7 @@ flowchart LR
 
 完整说明：[文档索引](docs/index.md) · [已知限制](docs/limitations.md) · [原始分阶段需求](docs/reference/implementation-prompts.zh-CN.md)
 
-企业能力配置、迁移和验收入口：[v0.2 升级说明](docs/enterprise-upgrade.md)。运行 `uv run python -m mercury.cli release-check` 查看尚未满足的上线条件；未通过时不会给出上线就绪结论。
+企业能力配置、迁移和验收入口：[v0.2 升级说明](docs/enterprise-upgrade.md)。运行 `uv run python -m mercury.cli release-check` 查看尚未满足的本地上线条件；staging/production 还须加上 `--tenant-id` 与 `--store-id`，按行级隔离读取对应店铺的审核证据。未通过时不会给出上线就绪结论。
 
 ## 开源
 

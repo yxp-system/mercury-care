@@ -14,6 +14,7 @@
 | [运维](operations.md) | 发布、停止、恢复与未知动作 |
 | [依赖](dependency-matrix.md) | 版本与官方资料 |
 | [限制](limitations.md) | 当前未交付或未验证能力 |
+| [隐私与保留策略模板](privacy-retention-policy.md) | 需组织审批的数据分类、保留/删除与事故响应流程 |
 | [原始需求](reference/implementation-prompts.zh-CN.md) | 用户提供的完整分阶段提示词，保留原文 |
 
 [v0.2 企业能力升级与配置](enterprise-upgrade.md)

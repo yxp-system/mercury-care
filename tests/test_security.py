@@ -6,7 +6,7 @@ import time
 import jwt
 import pytest
 from mercury.config import Settings
-from mercury.models import Membership, Message, Policy, uid
+from mercury.models import Membership, Message, Policy, ReleaseEvidence, uid
 from mercury.seed import seed
 from pydantic import ValidationError
 from sqlalchemy import text, update
@@ -249,6 +249,44 @@ def test_postgres_rls_restricted_role(db):
     if db.engine.dialect.name != "postgresql":
         pytest.skip("requires PostgreSQL; covered by postgres CI job")
     # Apply real policies, then query as a non-owner without SUPERUSER/BYPASSRLS.
+    stamp = time.time()
+    with db.session(write=True) as session:
+        session.add_all(
+            [
+                ReleaseEvidence(
+                    id="release-evidence-local",
+                    tenant_id="northstar",
+                    store_id="uk",
+                    check_name="data_governance",
+                    environment="staging",
+                    provider="synthetic",
+                    owner_id="agent",
+                    evidence_ref="test-local-evidence",
+                    summary="Scoped test evidence for the current tenant and store.",
+                    tested_at=stamp - 30,
+                    expires_at=stamp + 3600,
+                    submitted_by="ops",
+                    status="submitted",
+                    review_note="",
+                ),
+                ReleaseEvidence(
+                    id="release-evidence-foreign",
+                    tenant_id="other",
+                    store_id="de",
+                    check_name="data_governance",
+                    environment="staging",
+                    provider="synthetic",
+                    owner_id="outsider",
+                    evidence_ref="test-foreign-evidence",
+                    summary="Evidence outside the current tenant and store.",
+                    tested_at=stamp - 30,
+                    expires_at=stamp + 3600,
+                    submitted_by="outsider",
+                    status="submitted",
+                    review_note="",
+                ),
+            ]
+        )
     with db.engine.begin() as conn:
         conn.execute(
             text(
@@ -258,20 +296,35 @@ def test_postgres_rls_restricted_role(db):
         )
         conn.execute(text("GRANT USAGE ON SCHEMA public TO mercury_rls_test"))
         conn.execute(text("GRANT SELECT ON cases TO mercury_rls_test"))
+        conn.execute(text("GRANT SELECT ON release_evidence TO mercury_rls_test"))
         conn.execute(text("ALTER TABLE cases ENABLE ROW LEVEL SECURITY"))
+        conn.execute(text("ALTER TABLE release_evidence ENABLE ROW LEVEL SECURITY"))
         conn.execute(
             text(
                 "CREATE POLICY tenant_test ON cases USING "
                 "(tenant_id=current_setting('app.tenant_id',true) AND store_id=current_setting('app.store_id',true))"
             )
         )
+        conn.execute(
+            text(
+                "CREATE POLICY tenant_test_release_evidence ON release_evidence USING "
+                "(tenant_id=current_setting('app.tenant_id',true) AND store_id=current_setting('app.store_id',true))"
+            )
+        )
         conn.execute(text("SET LOCAL ROLE mercury_rls_test"))
         assert conn.scalar(text("SELECT count(*) FROM cases")) == 0
+        assert conn.scalar(text("SELECT count(*) FROM release_evidence")) == 0
         conn.execute(
             text("SELECT set_config('app.tenant_id','northstar',true),set_config('app.store_id','uk',true)")
         )
         assert conn.scalar(text("SELECT count(*) FROM cases")) == 8
+        assert conn.scalar(text("SELECT count(*) FROM release_evidence")) == 1
         conn.execute(
             text("SELECT set_config('app.tenant_id','other',true),set_config('app.store_id','uk',true)")
         )
         assert conn.scalar(text("SELECT count(*) FROM cases")) == 0
+        assert conn.scalar(text("SELECT count(*) FROM release_evidence")) == 0
+        conn.execute(
+            text("SELECT set_config('app.tenant_id','other',true),set_config('app.store_id','de',true)")
+        )
+        assert conn.scalar(text("SELECT count(*) FROM release_evidence")) == 1

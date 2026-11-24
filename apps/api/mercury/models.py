@@ -398,6 +398,23 @@ class Escalation(Scoped, Base):
     )
 
 
+class ReleaseEvidence(Scoped, Base):
+    __tablename__ = "release_evidence"
+    check_name: Mapped[str] = mapped_column(String(80))
+    environment: Mapped[str] = mapped_column(String(24))
+    provider: Mapped[str] = mapped_column(String(160))
+    owner_id: Mapped[str] = mapped_column(String(80))
+    evidence_ref: Mapped[str] = mapped_column(String(300))
+    summary: Mapped[str] = mapped_column(Text)
+    tested_at: Mapped[float] = mapped_column(Float)
+    expires_at: Mapped[float] = mapped_column(Float)
+    submitted_by: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(24), default="submitted")
+    reviewer_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    reviewed_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 class Claim(Scoped, Base):
     __tablename__ = "claims"
     case_id: Mapped[str] = mapped_column(String(80))
