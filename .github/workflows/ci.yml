@@ -60,7 +60,7 @@ jobs:
           docker exec "$MERCURY_PG_CLIENT_CONTAINER" createdb -U postgres mercury_restore_test
           MERCURY_DATABASE_URL=postgresql+psycopg://postgres:ci-test-only@localhost:5432/mercury_restore_test MERCURY_DATA_DIR=.data/restored uv run python scripts/postgres_recovery.py restore .data/postgres-backup --workers-stopped
           MERCURY_DATABASE_URL=postgresql+psycopg://postgres:ci-test-only@localhost:5432/mercury_restore_test MERCURY_DATA_DIR=.data/restored uv run python scripts/recovery_drill.py verify --expected .data/recovery-expected.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results
